@@ -1,0 +1,30 @@
+[project]
+name = "shiso"
+version = "0.1.0"
+description = "Local-first, privacy-focused personal finance tracker"
+requires-python = ">=3.12"
+license = "MIT"
+
+dependencies = [
+    # Web framework
+    "fastapi>=0.135.0",
+    "uvicorn>=0.27.0",
+    # Database
+    "sqlalchemy>=2.0.0",
+    # Browser automation
+    "browser-use[cli]>=0.12.2",
+    "playwright>=1.40.0",
+    # Encryption
+    "cryptography>=42.0.0",
+    # PDF parsing
+    "pdfplumber>=0.10.0",
+    # Config
+    "pydantic>=2.0.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+]

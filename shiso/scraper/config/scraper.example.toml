@@ -1,0 +1,122 @@
+# Scraper configuration
+# Select analyst LLM with ANALYST_LLM env var (default: "local")
+# Browser agent defaults to browser_use; override with AGENT_LLM.
+
+[browser]
+# Dedicated automation profile using browser-use's bundled Chromium.
+# Sessions persist in this dir across runs. First run: log in manually.
+user_data_dir = "data/browser-profile"
+
+[agent]
+max_steps = 50
+max_failures = 3
+max_actions_per_step = 3
+detail_max_steps = 10          # max steps for pass-2 detail enrichment per account
+step_timeout = 600          # seconds per step
+llm_timeout = 300           # seconds per LLM call
+use_vision = true
+headless = false
+enable_planning = false
+use_thinking = false
+flash_mode = true
+
+[logging]
+level = "INFO"
+
+[llm.local]
+model = "qwen3.5-scraper:latest"
+base_url = "http://localhost:11434/v1"
+api_key = "ollama"
+timeout = 180.0
+
+# Per-preset observer: when using local, observer is also local (no remote keys needed).
+[llm.local.observer]
+model = "qwen3.5-scraper:latest"
+base_url = "http://localhost:11434/v1"
+api_key = "ollama"
+timeout = 180.0
+
+[llm.openrouter]
+model = "openrouter/hunter-alpha"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+timeout = 60.0
+supports_vision = false
+
+[llm.openrouter.observer]
+model = "google/gemini-3.1-flash-lite-preview"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+timeout = 60.0
+
+[llm.browser_use]
+# browser-use cloud API (optimized for browser automation).
+# Requires BROWSER_USE_API_KEY in your environment (for local dev: put it in .env).
+model = "bu-2-0"
+base_url = "https://llm.api.browser-use.com"
+api_key_env = "BROWSER_USE_API_KEY"
+timeout = 120.0
+supports_vision = true
+
+# Global observer fallback: used when active preset has no nested observer.
+[llm.observer]
+model = "google/gemini-3.1-flash-lite-preview"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+timeout = 60.0
+
+
+[statements]
+download_dir = "data/statements"
+max_steps = 50                  # single agent downloads all accounts
+eligible_account_types = ["credit_card", "loan", "line_of_credit"]
+
+# Provider scraper config — only scraper-specific settings (URLs, modes).
+# Institution names and account types live in the DB (scraper_logins table).
+
+[providers.amex]
+start_url = "https://www.americanexpress.com/en-us/account/login?inav=en_us_menu_login"
+dashboard_url = "https://global.americanexpress.com/overview"
+
+[providers.nipsco]
+start_url = "https://myaccount.nipsco.com/"
+
+[providers.american_water]
+start_url = "https://mywaterv2.amwater.com/"
+
+[providers.chase]
+login_mode = "session_only"
+start_url = "https://secure.chase.com/web/auth/"
+
+[providers.bofa]
+start_url = "https://www.bankofamerica.com/signin/"
+
+[providers.capital_one]
+start_url = "https://www.capitalone.com/sign-in/"
+
+[providers.citi]
+start_url = "https://online.citi.com/US/login.do"
+
+[providers.discover]
+start_url = "https://portal.discover.com/customersvcs/universalLogin/ac_main"
+
+[providers.duke_energy]
+start_url = "https://www.duke-energy.com/my-account/sign-in"
+
+[providers.fidelity]
+start_url = "https://digital.fidelity.com/prgw/digital/login/full-page"
+
+[providers.marcus]
+start_url = "https://www.marcus.com/us/en/login"
+
+[providers.progressive]
+start_url = "https://account.progressive.com/access/login"
+
+[providers.schwab]
+start_url = "https://client.schwab.com/Login/SignOn/CustomerCenterLogin.aspx"
+
+[providers.truist]
+start_url = "https://bank.truist.com/web/auth/"
+
+[providers.wells_fargo]
+start_url = "https://connect.secure.wellsfargo.com/auth/login/present"

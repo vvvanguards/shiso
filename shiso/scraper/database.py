@@ -1,0 +1,99 @@
+"""
+Shared database configuration for the finance dashboard.
+
+Schema is not yet finalized — use reset_db() to drop and recreate.
+
+TODO: Once the schema stabilizes, switch to Alembic migrations and
+      stop calling init_db()/create_all on every startup.
+"""
+
+from pathlib import Path
+
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+BASE_DIR = Path(__file__).resolve().parent
+DATABASE_PATH = BASE_DIR / "dashboard.db"
+DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+
+
+class Base(DeclarativeBase):
+    """Base class for dashboard ORM models."""
+
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False},
+)
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragma(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+# Canonical account types with asset/liability classification.
+ACCOUNT_TYPES = {
+    "Credit Card":      "liability",
+    "Loan":             "liability",
+    "Mortgage":         "liability",
+    "Line of Credit":   "liability",
+    "Utility":          "liability",
+    "Insurance":        "liability",
+    "Checking":         "asset",
+    "Savings":          "asset",
+    "Investment":       "asset",
+    "Property":         "asset",
+    "Other":            "liability",
+    "Unknown":          "liability",
+}
+
+
+def _import_models() -> None:
+    """Ensure all models are imported so metadata is populated."""
+    from .models.accounts import (  # noqa: F401
+        AccountSnapshot,
+        AccountStatement,
+        FinancialAccount,
+        FinancialAccountIdentifier,
+        FinancialAccountLogin,
+        FinancialAccountType,
+        PromoAprPeriod,
+        ScraperLogin,
+        ScraperLoginSyncRun,
+    )
+
+
+def init_db() -> None:
+    """Create tables if they don't exist and seed reference data."""
+    _import_models()
+    Base.metadata.create_all(bind=engine)
+    _seed_account_types()
+
+
+def reset_db() -> None:
+    """Drop and recreate all tables. Destroys all data."""
+    _import_models()
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    _seed_account_types()
+
+
+def _seed_account_types() -> None:
+    """Ensure all canonical account types exist with correct balance_type."""
+    from .models.accounts import FinancialAccountType
+
+    with Session(engine) as session:
+        for name, balance_type in ACCOUNT_TYPES.items():
+            existing = session.query(FinancialAccountType).filter_by(name=name).first()
+            if existing:
+                if existing.balance_type != balance_type:
+                    existing.balance_type = balance_type
+            else:
+                session.add(FinancialAccountType(name=name, balance_type=balance_type))
+        session.commit()

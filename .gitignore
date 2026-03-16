@@ -1,0 +1,33 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+dist/
+*.egg-info/
+
+# Database files
+*.db
+
+# Browser automation profile
+data/browser-profile/
+
+# Downloaded statements
+data/statements/
+
+# Analyst hints (generated per-user)
+shiso/scraper/config/hints/
+
+# Frontend build
+shiso/dashboard/frontend/node_modules/
+shiso/dashboard/frontend/dist/
+
+# Environment
+.env
+*.pem
+# Encryption keys
+.fernet.key
+
+# User-specific config
+accounts.json
+provider_hints.json
+scraper.toml
