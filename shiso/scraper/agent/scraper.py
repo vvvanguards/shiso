@@ -17,6 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
@@ -718,6 +719,22 @@ def _persist_statement(
         on_log(f"[{provider_key}] Saved statement for {card_name} ({statement_month})")
 
 
+def _provider_cookie_domains(config: dict[str, Any]) -> list[str]:
+    """Extract wildcard domains from provider URLs for cookie whitelisting."""
+    domains: set[str] = set()
+    for pcfg in config.get("providers", {}).values():
+        for key in ("start_url", "dashboard_url"):
+            url = pcfg.get(key, "")
+            if not url:
+                continue
+            host = urlparse(url).hostname
+            if host:
+                parts = host.split(".")
+                root = ".".join(parts[-2:]) if len(parts) > 2 else host
+                domains.add(f"*.{root}")
+    return sorted(domains)
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -763,12 +780,18 @@ async def scrape_provider(
     user_data_dir = Path(browser_cfg.get("user_data_dir", "data/browser-profile")).resolve()
     user_data_dir.mkdir(parents=True, exist_ok=True)
 
+    # Whitelist provider domains so the "I still don't care about cookies"
+    # extension doesn't dismiss consent banners on financial sites (which can
+    # reject session cookies needed for login persistence).
+    cookie_domains = _provider_cookie_domains(config)
+
     browser_session = BrowserSession(
         user_data_dir=str(user_data_dir),
         headless=agent_cfg.get("headless", False),
         keep_alive=True,
         downloads_path=str(download_dir),
         accept_downloads=True,
+        cookie_whitelist_domains=cookie_domains,
     )
 
     # Kill any leftover Chrome processes using our profile dir before launching

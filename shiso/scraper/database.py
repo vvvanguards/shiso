@@ -12,8 +12,8 @@ from pathlib import Path
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-BASE_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = BASE_DIR / "shiso.db"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+DATABASE_PATH = PROJECT_ROOT / "data" / "shiso.db"
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 

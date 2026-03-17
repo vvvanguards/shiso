@@ -19,7 +19,7 @@ just scrape               # Run scraper
 
 - **`shiso/scraper/`** — Browser-use agent scraper, DB models, sync worker
 - **`shiso/dashboard/`** — FastAPI API + Vue 3 / PrimeVue frontend
-- **Database**: SQLite at `shiso/scraper/shiso.db` (gitignored)
+- **Database**: SQLite at `data/shiso.db` (gitignored)
 - **Config**: `shiso/scraper/config/scraper.toml` (gitignored, see `scraper.example.toml`)
 
 ## Scraper / Dashboard Boundary

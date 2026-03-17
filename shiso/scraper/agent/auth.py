@@ -201,10 +201,14 @@ async def auth_login(targets: list[str] | None = None) -> None:
     user_data_dir = Path(browser_cfg.get("user_data_dir", "data/browser-profile")).resolve()
     user_data_dir.mkdir(parents=True, exist_ok=True)
 
+    from .scraper import _provider_cookie_domains
+    cookie_domains = _provider_cookie_domains(config)
+
     browser_session = BrowserSession(
         user_data_dir=str(user_data_dir),
         headless=False,
         keep_alive=True,
+        cookie_whitelist_domains=cookie_domains,
     )
     await browser_session.start()
 

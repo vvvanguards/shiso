@@ -5,14 +5,8 @@ __pycache__/
 dist/
 *.egg-info/
 
-# Database files
-*.db
-
-# Browser automation profile
-data/browser-profile/
-
-# Downloaded statements
-data/statements/
+# Runtime data (DB, browser profile, statements)
+data/
 
 
 # Frontend build

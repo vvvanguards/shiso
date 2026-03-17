@@ -21,6 +21,7 @@ dependencies = [
     # Config
     "pydantic>=2.0.0",
     "python-multipart>=0.0.9",
+    "tomli-w>=1.2.0",
 ]
 
 [project.optional-dependencies]
