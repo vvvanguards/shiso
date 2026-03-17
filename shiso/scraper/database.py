@@ -1,5 +1,5 @@
 """
-Shared database configuration for the finance dashboard.
+Shared database configuration for Shiso.
 
 Schema is not yet finalized — use reset_db() to drop and recreate.
 
@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = BASE_DIR / "dashboard.db"
+DATABASE_PATH = BASE_DIR / "shiso.db"
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 
