@@ -1,0 +1,43 @@
+{
+  "amex": {
+    "failed_actions": [
+      "Stale element indices (e.g., index=1338) fail on Amex \u2014 always refresh browser state before clicking after page changes",
+      "Clicking into individual account detail pages causes Observer failure \u2014 extract all data from dashboard only",
+      "Scroll actions fail on Amex pages due to JavaScript eval restrictions",
+      "2FA/verification required during pause_for_human actions \u2014 may need manual intervention or alternative authentication handling"
+    ],
+    "effective_patterns": [
+      "Dashboard at /overview exposes all 9 account balances in one view \u2014 no detail page navigation needed",
+      "'View more accounts' button successfully expands full account list on dashboard",
+      "PDF enrichment extracts statement_date, due_date, minimum_payment, statement_balance, credit_limit from downloaded statements",
+      "BLOCKING_OVERLAY and CONTENT_LOADING anomalies can be resolved without re-authentication"
+    ],
+    "navigation_tips": [
+      "CRITICAL: Never click into individual account detail pages \u2014 Observer fails there; extract all data from /overview dashboard",
+      "Use '/overview' URL directly to return to multi-card dashboard \u2014 'Home' link goes to single-card view",
+      "Navigate to Payments page for due_date info rather than account detail pages",
+      "Amazon Business Prime Card (01009) often shows null balance/due_date \u2014 treat as complete if no data visible",
+      "Minimize page transitions after login \u2014 Amex frequently re-authenticates upon clicking account management links",
+      "Statement downloads require ~9 steps per account \u2014 expect 70+ steps for full statement pass across all accounts"
+    ],
+    "updated_at": "2026-03-14T22:54:55.839943"
+  },
+  "chase": {
+    "failed_actions": [
+      "Model output for 'done' action must include 'accounts' field, even if empty list",
+      "Avoid 'pause_for_human' action when 2FA is required - use alternative verification handling",
+      "Do not output 'unknown' action type - always use valid action schema",
+      "Password reset required blocks account extraction - handle before scraping"
+    ],
+    "effective_patterns": [
+      "Navigation to secure.chase.com/web/auth/ works as starting point",
+      "Click and wait actions execute successfully before 2FA triggers"
+    ],
+    "navigation_tips": [
+      "Chase requires 2FA verification for most accounts - prepare alternative auth flow",
+      "Password reset requirements prevent account access - check before scraping",
+      "Account data extraction fails when login cannot complete - prioritize auth success"
+    ],
+    "updated_at": "2026-03-14T22:56:57.398769"
+  }
+}

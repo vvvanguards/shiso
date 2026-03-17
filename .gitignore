@@ -14,8 +14,6 @@ data/browser-profile/
 # Downloaded statements
 data/statements/
 
-# Analyst hints (generated per-user)
-shiso/scraper/config/hints/
 
 # Frontend build
 shiso/dashboard/frontend/node_modules/
@@ -29,5 +27,4 @@ shiso/dashboard/frontend/dist/
 
 # User-specific config
 accounts.json
-provider_hints.json
 scraper.toml
