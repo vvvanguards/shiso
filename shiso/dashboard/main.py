@@ -124,6 +124,7 @@ class LoginBase(BaseModel):
     password: Optional[str] = None
     login_url: Optional[str] = None
     account_type: str
+    tool_key: str = "financial_scraper"
     enabled: bool = True
     sort_order: int = 0
 
@@ -137,6 +138,7 @@ class LoginResponse(BaseModel):
     has_password: bool = False
     login_url: Optional[str] = None
     account_type: str
+    tool_key: str = "financial_scraper"
     enabled: bool = True
     sort_order: int = 0
     last_sync_started_at: Optional[str] = None
@@ -179,6 +181,7 @@ def _login_to_response(login: scraper.ScraperLogin) -> LoginResponse:
         has_password=bool(login.password_encrypted),
         login_url=login.login_url,
         account_type=login.account_type,
+        tool_key=login.tool_key or "financial_scraper",
         enabled=login.enabled,
         sort_order=login.sort_order,
         last_sync_started_at=login.last_sync_started_at.isoformat() if login.last_sync_started_at else None,
@@ -239,6 +242,7 @@ def _apply_login_data(login: scraper.ScraperLogin, data: LoginBase):
     login.username = data.username.strip() if data.username else None
     login.login_url = data.login_url
     login.account_type = data.account_type
+    login.tool_key = data.tool_key or "financial_scraper"
     login.enabled = data.enabled
     login.sort_order = data.sort_order
     if data.password is not None:
@@ -601,6 +605,45 @@ def list_accounts_simple():
         return [
             {"id": a.id, "display_name": a.display_name, "account_mask": a.account_mask, "provider_key": a.provider_key, "institution": a.institution}
             for a in accounts
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
+@app.get("/api/tools")
+def list_registered_tools():
+    """List all registered workflows (exposed as tools for API compatibility)."""
+    return [
+        {"tool_key": w.key, "display_name": w.name, "description": w.description}
+        for w in scraper.list_workflows()
+    ]
+
+
+@app.get("/api/tools/{tool_key}/runs")
+def list_tool_runs(tool_key: str, limit: int = 20):
+    """Recent ToolRunOutput rows for a specific tool."""
+    with scraper.SessionLocal() as session:
+        runs = (
+            session.query(scraper.ToolRunOutput)
+            .filter(scraper.ToolRunOutput.tool_key == tool_key)
+            .order_by(scraper.ToolRunOutput.created_at.desc())
+            .limit(max(1, min(limit, 100)))
+            .all()
+        )
+        return [
+            {
+                "id": r.id,
+                "tool_key": r.tool_key,
+                "sync_run_id": r.sync_run_id,
+                "scraper_login_id": r.scraper_login_id,
+                "provider_key": r.provider_key,
+                "output_json": r.output_json,
+                "items_count": r.items_count,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in runs
         ]
 
 

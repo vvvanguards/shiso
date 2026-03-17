@@ -104,6 +104,7 @@ async def run_sync(
     interactive: bool = True,
     on_log: Callable[[str], None] | None = None,
     run_id: int | None = None,
+    workflow: Any | None = None,
 ) -> SyncRun:
     """Run a full sync for one provider: scrape, persist, analyze.
 
@@ -134,9 +135,29 @@ async def run_sync(
             accounts_db=accounts_db,
             interactive=interactive,
             on_log=_log,
+            workflow=workflow,
         )
         sync.results = results
-        sync.persisted = accounts_db.save_scrape_results(provider_key, results)
+
+        # Route persistence: non-financial workflows → ToolRunOutput; financial → AccountsDB
+        if workflow and workflow.key != "financial_scraper":
+            from ..database import SessionLocal as _SL
+            from ..models.tools import ToolRunOutput
+            login_id = logins[0].get("id") if logins else None
+            output = ToolRunOutput(
+                tool_key=workflow.key,
+                sync_run_id=sync.run_id,
+                scraper_login_id=login_id,
+                provider_key=provider_key,
+                output_json={workflow.result_key: [r for r in results]},
+                items_count=len(results),
+            )
+            with _SL() as session:
+                session.add(output)
+                session.commit()
+            sync.persisted = results
+        else:
+            sync.persisted = accounts_db.save_scrape_results(provider_key, results)
 
     except Exception as exc:
         logger.exception("Sync failed for %s", provider_key)

@@ -118,6 +118,7 @@ class ScraperLogin(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     provider_key: Mapped[str] = mapped_column(String, nullable=False)
+    tool_key: Mapped[str] = mapped_column(String, nullable=False, default="financial_scraper")
     institution: Mapped[Optional[str]] = mapped_column(String)  # e.g. "Bank of America", "Chase"
     label: Mapped[str] = mapped_column(String, nullable=False)
     username: Mapped[Optional[str]] = mapped_column(String)

@@ -151,6 +151,43 @@
         </AccountTable>
       </Section>
 
+      <!-- Tools -->
+      <Section header="Tools" :collapsed="true" persistKey="tools" @toggle="(e) => { if (!e.value && !tools.value.length) loadLogins() }">
+        <div v-if="!tools.length" class="py-4 text-center text-surface-400">No tools registered.</div>
+        <div v-else class="space-y-4">
+          <DataTable :value="tools" stripedRows size="small">
+            <Column field="display_name" header="Tool" sortable>
+              <template #body="{ data }">
+                <div class="font-medium">{{ data.display_name }}</div>
+                <div class="text-xs text-surface-400">{{ data.tool_key }}</div>
+              </template>
+            </Column>
+            <Column field="description" header="Description" />
+            <Column header="" style="width: 6rem">
+              <template #body="{ data }">
+                <Button @click="loadToolRuns(data.tool_key)" icon="pi pi-list" severity="secondary" text rounded size="small" v-tooltip.top="'View runs'" />
+              </template>
+            </Column>
+          </DataTable>
+
+          <div v-if="selectedToolKey && toolRuns.length" class="mt-4">
+            <h3 class="text-sm uppercase tracking-widest text-surface-400 mb-2">Recent Runs: {{ selectedToolKey }}</h3>
+            <DataTable :value="toolRuns" stripedRows size="small" :rows="10" :paginator="toolRuns.length > 10">
+              <Column field="created_at" header="Date" sortable>
+                <template #body="{ data }">{{ relativeTime(data.created_at) }}</template>
+              </Column>
+              <Column field="provider_key" header="Provider" sortable />
+              <Column field="items_count" header="Items" sortable />
+              <Column header="Output">
+                <template #body="{ data }">
+                  <span class="text-xs text-surface-400 truncate block max-w-[300px]">{{ JSON.stringify(data.output_json).substring(0, 100) }}...</span>
+                </template>
+              </Column>
+            </DataTable>
+          </div>
+        </div>
+      </Section>
+
       <!-- Admin: Manage Logins -->
       <Section header="Manage Logins" :collapsed="true" persistKey="logins" @toggle="onLoginsToggle" @ready="onLoginsReady">
         <template #icons>
@@ -337,6 +374,10 @@
           <Select v-model="loginForm.account_type" :options="accountTypes" fluid />
         </div>
         <div class="flex flex-col gap-1">
+          <label class="text-sm font-medium">Tool</label>
+          <Select v-model="loginForm.tool_key" :options="toolOptions" optionLabel="label" optionValue="value" fluid />
+        </div>
+        <div class="flex flex-col gap-1">
           <label class="text-sm font-medium">Username</label>
           <InputText v-model="loginForm.username" placeholder="Username" fluid />
         </div>
@@ -383,6 +424,8 @@ import {
   deletePromo as apiDeletePromo,
   fetchAccountsList,
   fetchAccountTypes,
+  fetchTools,
+  fetchToolRuns,
 } from './api.js'
 import { money, signedMoney, relativeTime, typeSeverity, isDueSoon } from './helpers.js'
 
@@ -433,6 +476,9 @@ const accountTypes = ref([])
 
 const promos = ref([])
 const accountsList = ref([])
+const tools = ref([])
+const toolRuns = ref([])
+const selectedToolKey = ref(null)
 const promoDialogVisible = ref(false)
 const promoDialogEdit = ref(false)
 const promoEditId = ref(null)
@@ -454,7 +500,7 @@ const importing = ref(false)
 const showUnmatched = ref(false)
 
 function defaultLoginForm() {
-  return { provider_key: '', institution: '', label: '', username: '', password: '', login_url: '', account_type: 'Credit Card', enabled: true, sort_order: 0 }
+  return { provider_key: '', institution: '', label: '', username: '', password: '', login_url: '', account_type: 'Credit Card', tool_key: 'financial_scraper', enabled: true, sort_order: 0 }
 }
 
 // Filtered views of snapshots
@@ -471,6 +517,19 @@ const liabilityRows = computed(() =>
 )
 
 const enabledLoginCount = computed(() => logins.value.filter(login => login.enabled).length)
+
+const toolOptions = computed(() =>
+  tools.value.map(t => ({ label: t.display_name, value: t.tool_key }))
+)
+
+async function loadToolRuns(toolKey) {
+  selectedToolKey.value = toolKey
+  try {
+    toolRuns.value = await fetchToolRuns(toolKey)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
+  }
+}
 
 // Data loading
 async function loadDashboard() {
@@ -499,10 +558,11 @@ async function refreshData() {
 async function loadLogins() {
   loginsLoading.value = true
   try {
-    const [l, p, types] = await Promise.all([fetchLogins(), fetchProviders(), fetchAccountTypes()])
+    const [l, p, types, t] = await Promise.all([fetchLogins(), fetchProviders(), fetchAccountTypes(), fetchTools()])
     logins.value = l
     providers.value = p
     accountTypes.value = types.map(t => t.name)
+    tools.value = t
   } catch (err) { toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 }) } finally { loginsLoading.value = false }
 }
 
@@ -537,7 +597,7 @@ function openLoginDialog(login = null) {
   if (login) {
     loginDialogEdit.value = true
     loginEditId.value = login.id
-    loginForm.value = { provider_key: login.provider_key, institution: login.institution || '', label: login.label, username: login.username || '', password: '', login_url: login.login_url || '', account_type: login.account_type, enabled: login.enabled, sort_order: login.sort_order }
+    loginForm.value = { provider_key: login.provider_key, institution: login.institution || '', label: login.label, username: login.username || '', password: '', login_url: login.login_url || '', account_type: login.account_type, tool_key: login.tool_key || 'financial_scraper', enabled: login.enabled, sort_order: login.sort_order }
   } else {
     loginDialogEdit.value = false
     loginEditId.value = null
@@ -547,7 +607,7 @@ function openLoginDialog(login = null) {
 }
 
 async function saveLogin() {
-  const data = { ...loginForm.value, institution: loginForm.value.institution || null, login_url: loginForm.value.login_url || null, username: loginForm.value.username || null, password: loginForm.value.password || null }
+  const data = { ...loginForm.value, institution: loginForm.value.institution || null, login_url: loginForm.value.login_url || null, username: loginForm.value.username || null, password: loginForm.value.password || null, tool_key: loginForm.value.tool_key || 'financial_scraper' }
   try {
     if (loginDialogEdit.value) { await updateLogin(loginEditId.value, data); toast.add({ severity: 'success', summary: 'Updated', detail: data.label, life: 3000 }) }
     else { await createLogin(data); toast.add({ severity: 'success', summary: 'Created', detail: data.label, life: 3000 }) }

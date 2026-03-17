@@ -67,6 +67,7 @@ def _import_models() -> None:
         ScraperLogin,
         ScraperLoginSyncRun,
     )
+    from .models.tools import ToolRunOutput  # noqa: F401
 
 
 def init_db() -> None:

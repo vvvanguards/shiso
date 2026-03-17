@@ -101,26 +101,11 @@ async def _kill_stale_chrome(user_data_dir: Path, *, on_log: Callable | None = N
 
 
 # ---------------------------------------------------------------------------
-# Pydantic output schema — browser-use returns structured data via this
+# Pydantic output schema — re-exported from workflows for backward compat
 # ---------------------------------------------------------------------------
 
-class AccountOutput(BaseModel):
-    card_name: str = ""
-    account_mask: str | None = None
-    current_balance: float | None = None
-    statement_balance: float | None = None
-    due_date: str | None = None
-    minimum_payment: float | None = None
-    last_payment_amount: float | None = None
-    last_payment_date: str | None = None
-    credit_limit: float | None = None
-    interest_rate: float | None = None
-    account_type: str | None = None
-    address: str | None = None
-
-
-class AccountListOutput(BaseModel):
-    accounts: list[AccountOutput]
+from ..tools.workflows import AccountOutput, AccountListOutput  # noqa: F401
+from ..tools.workflows import Workflow
 
 
 from dataclasses import dataclass, field
@@ -227,18 +212,12 @@ def _format_hints(hints: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _build_task(
+def _build_preamble(
     provider_key: str,
     provider_cfg: dict,
-    login: dict,
     dashboard_url: str | None,
-    extraction_prompt: str,
 ) -> str:
-    """Build the pass-1 (discovery) Agent task string.
-
-    Pass 1 focuses on finding ALL accounts from the overview page and extracting
-    whatever fields are visible there. Detail enrichment happens in pass 2.
-    """
+    """Build the universal login/2FA/navigation preamble shared by all workflows."""
     institution = provider_cfg.get("institution", provider_key.replace("_", " ").title())
 
     parts = [
@@ -251,44 +230,22 @@ def _build_task(
     if dashboard_url:
         parts.append(f"After logging in, navigate to {dashboard_url}.")
 
-    parts.append("""
-CRITICAL: You MUST find every single account. Do NOT return results until you have
-exhausted all ways to reveal hidden accounts. Follow these steps IN ORDER:
+    return "\n\n".join(parts)
 
-1. FIRST, look for and click any of these BEFORE extracting data:
-   - "View more accounts" buttons or links
-   - "Show all" or "See all accounts" links
-   - Expandable sections, accordions, or collapsed panels
-   - Pagination controls (next page, page numbers)
-   - Tabs that might contain additional accounts (e.g. "Business", "Personal")
-   - Carousels with arrows to reveal more cards
 
-2. THEN scroll down the ENTIRE page to ensure nothing is hidden below the fold.
+def _build_task(
+    provider_key: str,
+    provider_cfg: dict,
+    dashboard_url: str | None,
+    workflow: Workflow,
+    extraction_prompt: str,
+) -> str:
+    """Build the full Agent task: preamble + workflow prompt + extraction prompt."""
+    preamble = _build_preamble(provider_key, provider_cfg, dashboard_url)
 
-3. ONLY AFTER expanding everything and scrolling, extract ALL accounts.
-
-For each account, extract whatever is visible on the overview page:
-- card_name: Display name of the account/card
-- account_mask: Last 4-5 digits (e.g. from "****1234")
-- current_balance: Current/outstanding balance amount
-- statement_balance: Statement balance if shown, or null
-- due_date: Payment due date in YYYY-MM-DD format
-- minimum_payment: Minimum payment amount due
-- last_payment_amount: Most recent payment amount, or null
-- last_payment_date: Date of most recent payment in YYYY-MM-DD format, or null
-- credit_limit: Credit limit or credit line amount, or null
-- interest_rate: Current APR/interest rate as a percentage number (e.g. 29.99), or null
-- account_type: e.g. credit_card, bank_account, utility, loan
-- address: Service/billing address if shown
-
-Do NOT click into individual account detail pages — just capture what's on the overview.
-""")
-
-    parts.append(extraction_prompt)
-    parts.append(
-        "Do NOT call done until you have clicked every 'view more' button and scrolled "
-        "the full page. Missing accounts is unacceptable. Return all accounts as structured output."
-    )
+    parts = [preamble, workflow.prompt_template]
+    if extraction_prompt:
+        parts.append(extraction_prompt)
 
     return "\n\n".join(parts)
 
@@ -747,6 +704,7 @@ async def scrape_provider(
     accounts_db: Any | None = None,
     interactive: bool = True,
     on_log: Callable[[str], None] | None = None,
+    workflow: Workflow | None = None,
 ) -> list[dict[str, Any]]:
     """Scrape one provider using browser-use Agent.
 
@@ -822,7 +780,11 @@ async def scrape_provider(
         if on_log:
             on_log(f"[{provider_key}] Scraping as {label}...")
 
-        task = _build_task(provider_key, provider_cfg, login, dashboard_url, extraction_prompt)
+        # Resolve workflow — default to financial_scraper
+        from ..tools.workflows import get_workflow as _get_wf, FINANCIAL_WORKFLOW
+        active_wf = workflow or _get_wf("financial_scraper") or FINANCIAL_WORKFLOW
+        output_schema = active_wf.output_schema
+        task = _build_task(provider_key, provider_cfg, dashboard_url, active_wf, extraction_prompt)
 
         tools = _build_tools(interactive=interactive)
 
@@ -836,7 +798,7 @@ async def scrape_provider(
             max_failures=agent_cfg.get("max_failures", 3),
             max_actions_per_step=agent_cfg.get("max_actions_per_step", 3),
             extend_system_message=_format_hints(hints),
-            output_model_schema=AccountListOutput,
+            output_model_schema=output_schema,
             sensitive_data={"x_username": username, "x_password": password},
             directly_open_url=start_url,
         )
@@ -847,18 +809,26 @@ async def scrape_provider(
             )
 
             # --- Pass 1: extract accounts from overview ---
-            result = history.get_structured_output(AccountListOutput)
+            result = history.get_structured_output(output_schema)
             login_accounts: list[dict] = []
-            if result and result.accounts:
-                login_accounts = [a.model_dump() for a in result.accounts]
-            else:
+            if result:
+                result_dict = result.model_dump()
+                # Use the workflow's result_key to extract the list
+                login_accounts = result_dict.get(active_wf.result_key, [])
+                if not login_accounts:
+                    # Fallback: find first list field
+                    login_accounts = next((v for v in result_dict.values() if isinstance(v, list)), []) or []
+            if not login_accounts:
                 # Fallback: try parsing final_result as JSON
                 raw_text = history.final_result()
                 if raw_text:
                     try:
                         parsed = json.loads(raw_text)
-                        if isinstance(parsed, dict) and "accounts" in parsed:
-                            parsed = parsed["accounts"]
+                        if isinstance(parsed, dict):
+                            # Find the first list value in the dict
+                            list_val = next((v for v in parsed.values() if isinstance(v, list)), None)
+                            if list_val is not None:
+                                parsed = list_val
                         if isinstance(parsed, list):
                             login_accounts = parsed
                     except (json.JSONDecodeError, TypeError):
@@ -869,19 +839,27 @@ async def scrape_provider(
                     on_log(f"[{provider_key}] No accounts found for {label}")
             else:
                 if on_log:
-                    on_log(f"[{provider_key}] Pass 1: found {len(login_accounts)} account(s)")
+                    on_log(f"[{provider_key}] Pass 1: found {len(login_accounts)} item(s)")
 
-                # Merge into collected accounts
-                collected: dict[str, dict] = {}
-                added, total = _merge_accounts(
-                    collected, login_accounts,
-                    provider_key=provider_key,
-                    label=label,
-                    login_id=login_id,
-                )
-                all_accounts.extend(collected.values())
+                if active_wf.key != "financial_scraper":
+                    # Non-financial workflows: store raw results directly
+                    for item in login_accounts:
+                        item.setdefault("provider", provider_key)
+                        item.setdefault("login_id", login_id)
+                    all_accounts.extend(login_accounts)
+                else:
+                    # Financial scraper: merge/dedup accounts
+                    collected: dict[str, dict] = {}
+                    added, total = _merge_accounts(
+                        collected, login_accounts,
+                        provider_key=provider_key,
+                        label=label,
+                        login_id=login_id,
+                    )
+                    all_accounts.extend(collected.values())
+
                 if on_log:
-                    on_log(f"[{provider_key}] Got {total} account(s) from {label}")
+                    on_log(f"[{provider_key}] Got {len(all_accounts)} item(s) from {label}")
 
             # Mark login as authenticated
             _update_auth_status(login_id, "authenticated")

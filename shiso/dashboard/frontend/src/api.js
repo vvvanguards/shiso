@@ -149,6 +149,18 @@ export async function fetchAccountsList() {
   return response.json()
 }
 
+export async function fetchTools() {
+  const response = await fetch(`${API_BASE}/tools`)
+  if (!response.ok) throw new Error('Failed to fetch tools')
+  return response.json()
+}
+
+export async function fetchToolRuns(toolKey) {
+  const response = await fetch(`${API_BASE}/tools/${toolKey}/runs`)
+  if (!response.ok) throw new Error('Failed to fetch tool runs')
+  return response.json()
+}
+
 export async function importLogins(file, selectedRowIds) {
   const form = new FormData()
   form.append('file', file)

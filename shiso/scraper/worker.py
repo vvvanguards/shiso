@@ -23,6 +23,7 @@ from .database import SessionLocal, init_db
 from .models.accounts import ScraperLogin, ScraperLoginSyncRun
 from .services.accounts_db import AccountsDB
 from .services.sync import run_sync
+from .tools import get_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,17 @@ async def execute_run(run_id: int) -> tuple[str | None, list[str]]:
             login.last_sync_started_at = db_run.started_at
         session.commit()
 
+    # Resolve workflow from login's tool_key
+    with SessionLocal() as session:
+        login_obj = session.get(ScraperLogin, login_id)
+        tool_key = login_obj.tool_key if login_obj else "financial_scraper"
+
+    workflow = None
+    if tool_key and tool_key != "financial_scraper":
+        workflow = get_workflow(tool_key)
+        if not workflow:
+            logger.warning("Unknown tool_key '%s' for login %d, falling back to default", tool_key, login_id)
+
     accounts = load_accounts(login_ids=[login_id])
     if not accounts:
         with SessionLocal() as session:
@@ -116,6 +128,7 @@ async def execute_run(run_id: int) -> tuple[str | None, list[str]]:
             accounts_db=AccountsDB(),
             run_id=run_id,
             on_log=_on_log,
+            workflow=workflow,
         )
     except Exception:
         logger.exception("Sync run %d failed", run_id)
