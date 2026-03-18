@@ -139,7 +139,7 @@ class ScrapeResult:
 class ScrapeContext:
     """Run-scoped configuration carried through all scraper functions."""
     provider_key: str
-    interactive: bool = True
+    interactive: bool = False
     download_statements: bool = False
     accounts_db: Any | None = None
     on_log: Callable[[str], None] | None = None
@@ -384,7 +384,7 @@ class _HumanPauseSkipped(Exception):
     """Raised when pause_for_human is called in auto mode to abort the agent."""
 
 
-def _build_tools(*, interactive: bool = True) -> Any:
+def _build_tools(*, interactive: bool = False) -> Any:
     """Build a Tools instance with a custom pause_for_human action.
 
     The agent calls this action when it encounters a 2FA/verification screen,
@@ -726,10 +726,10 @@ async def scrape_provider(
     *,
     download_statements: bool = False,
     accounts_db: Any | None = None,
-    interactive: bool = True,
+    interactive: bool = False,
     on_log: Callable[[str], None] | None = None,
     workflow: Workflow | None = None,
-) -> list[dict[str, Any]]:
+) -> ScrapeResult:
     """Scrape one provider using browser-use Agent.
 
     Pass 1: discover accounts from overview page.
