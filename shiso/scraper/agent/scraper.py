@@ -473,6 +473,109 @@ async def _on_step(agent: Agent, on_log: Callable[[str], None] | None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Account detail enrichment — navigate to each account's detail page
+# ---------------------------------------------------------------------------
+
+
+async def _enrich_account_details(
+    browser_session: BrowserSession,
+    llm: ChatOllama | ChatOpenRouter,
+    accounts: list[dict[str, Any]],
+    provider_key: str,
+    provider_cfg: dict,
+    config: dict,
+    dashboard_url: str | None = None,
+    start_url: str | None = None,
+    on_log: Callable[[str], None] | None = None,
+) -> None:
+    """Navigate to each account's detail page and extract promo APR and other details."""
+    agent_cfg = config.get("agent", {})
+    detail_max_steps = agent_cfg.get("detail_max_steps", 15)
+    institution = provider_cfg.get("institution", provider_key.replace("_", " ").title())
+    tools = _build_tools(interactive=False)
+
+    for acct in accounts:
+        card_name = acct.get("card_name", "unknown")
+        mask = acct.get("account_mask", "")
+        mask_hint = f" ending in {mask}" if mask else ""
+
+        if on_log:
+            on_log(f"[{provider_key}] Enriching details for {card_name}{mask_hint}...")
+
+        # Build task for this single account
+        task = f"""You are on the {institution} dashboard.
+Navigate to the account "{card_name}"{mask_hint} and extract detailed information.
+
+Steps:
+1. Click on the account named "{card_name}" to open its details
+2. Look for promotional APR information (intro APR, promo end date, regular APR after promo)
+3. Find the credit limit or spending power
+4. Find the current interest rate/APR
+5. Return the extracted information
+
+Look for fields like:
+- "Intro APR", "Promotional APR", "0% intro", "0% APR for X months"
+- "Go-to rate", "Standard APR", "Regular APR", "APR after promo"
+- "Promo end date", "Rate valid until", "Offer expires"
+- "Credit limit", "Spending power", "Credit line"
+- "Interest rate", "APR", "Annual percentage rate"
+
+Return a JSON object with these fields (use null if not found):
+{{
+  "intro_apr_rate": <float or null>,
+  "intro_apr_end_date": "<YYYY-MM-DD or null>",
+  "regular_apr": <float or null>,
+  "promo_type": "<purchase|balance_transfer|general|null>",
+  "credit_limit": <float or null>,
+  "interest_rate": <float or null>
+}}
+
+After extracting, navigate back to the dashboard and call done."""
+
+        agent = Agent(
+            task=task,
+            llm=llm,
+            browser_session=browser_session,
+            tools=tools,
+            use_vision=True,
+            max_steps=detail_max_steps,
+            max_failures=agent_cfg.get("max_failures", 2),
+            max_actions_per_step=3,
+            directly_open_url=dashboard_url or start_url or "",
+        )
+
+        try:
+            history = await agent.run(on_step_end=lambda a: _on_step(a, on_log))
+            result_text = history.final_result()
+            if result_text:
+                import json
+                try:
+                    # Handle JSON wrapped in markdown code blocks
+                    text = result_text.strip()
+                    if text.startswith("```"):
+                        text = text.split("```")[1]
+                        if text.startswith("json"):
+                            text = text[4:]
+                        text = text.strip()
+                    detail = json.loads(text)
+                    # Merge extracted fields into account dict
+                    for field in ("intro_apr_rate", "intro_apr_end_date", "regular_apr",
+                                  "promo_type", "credit_limit", "interest_rate"):
+                        if detail.get(field) is not None:
+                            acct[field] = detail[field]
+                    if on_log:
+                        enriched = [f for f in detail if detail[f] is not None]
+                        if enriched:
+                            on_log(f"[{provider_key}] Enriched {card_name}: {', '.join(enriched)}")
+                except (json.JSONDecodeError, TypeError):
+                    pass  # Keep existing values if parse fails
+        except Exception as exc:
+            logger.warning("[%s] Detail enrichment failed for %s: %s", provider_key, card_name, exc)
+            if on_log:
+                on_log(f"[{provider_key}] Detail enrichment skipped for {card_name}: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Statement downloads — separate Agent task per eligible account
 # ---------------------------------------------------------------------------
 
@@ -904,6 +1007,24 @@ async def scrape_provider(
                 metrics.errors.append(f"{label}: {exc}")
                 if on_log:
                     on_log(f"[{provider_key}] Error for {label}: {exc}")
+
+        # --- Pass 1.5: enrich account details (promo APR, credit limit) ---
+        if all_accounts:
+            enrich_details = agent_cfg.get("enrich_details", True)  # Enable by default
+            if enrich_details:
+                if on_log:
+                    on_log(f"[{provider_key}] Enriching account details...")
+                await _enrich_account_details(
+                    browser_session=browser_session,
+                    llm=llm,
+                    accounts=all_accounts,
+                    provider_key=provider_key,
+                    provider_cfg=provider_cfg,
+                    config=config,
+                    dashboard_url=provider_cfg.get("dashboard_url"),
+                    start_url=provider_cfg.get("start_url"),
+                    on_log=on_log,
+                )
 
         # --- Pass 2: download statement PDFs and extract billing data ---
         # Persist accounts first so statement matching can find them in the DB
