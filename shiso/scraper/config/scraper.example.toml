@@ -15,6 +15,7 @@ max_actions_per_step = 3
 detail_max_steps = 10          # max steps for pass-2 detail enrichment per account
 step_timeout = 600          # seconds per step
 llm_timeout = 300           # seconds per LLM call
+provider_timeout = 1800     # max wall-clock time per provider run (seconds, default 30 min)
 use_vision = true
 headless = false
 enable_planning = false

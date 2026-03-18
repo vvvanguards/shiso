@@ -33,6 +33,7 @@ class SyncRun:
         self.persisted: list[Any] = []
         self.metrics: dict[str, Any] = {}
         self.error: str | None = None
+        self.timed_out: bool = False
 
     def on_log(self, msg: str) -> None:
         self.logs.append(msg)
@@ -68,7 +69,14 @@ def create_sync_run(login_id: int) -> SyncRun:
 
 
 def finalize_sync_run(sync: SyncRun) -> None:
-    """Update the ScraperLoginSyncRun and ScraperLogin with final results."""
+    """Update the ScraperLoginSyncRun and ScraperLogin with final results.
+    
+    Status values:
+    - "running": in progress
+    - "succeeded": completed without errors
+    - "failed": error during execution
+    - "timeout": exceeded provider_timeout limit (may have partial results)
+    """
     finished_at = datetime.utcnow()
     metrics = sync.metrics
 
@@ -76,7 +84,15 @@ def finalize_sync_run(sync: SyncRun) -> None:
         db_run = session.get(ScraperLoginSyncRun, sync.run_id)
         login = session.get(ScraperLogin, sync.login_id)
 
-        if sync.error:
+        if sync.timed_out:
+            db_run.status = "timeout"
+            db_run.error = sync.error or "Provider timeout"
+            login.last_sync_status = "timeout"
+            login.last_sync_error = sync.error
+            # Record partial results for timeout
+            db_run.accounts_found = len(sync.results)
+            db_run.snapshots_saved = len(sync.persisted)
+        elif sync.error:
             db_run.status = "failed"
             db_run.error = sync.error
             login.last_sync_status = "failed"
@@ -141,6 +157,11 @@ async def run_sync(
         results = scrape_result.accounts
         sync.results = results
         sync.metrics = scrape_result.metrics.to_dict()
+
+        # Handle timeout status
+        if scrape_result.metrics.timed_out:
+            sync.timed_out = True
+            sync.error = scrape_result.metrics.errors[-1] if scrape_result.metrics.errors else "Provider timeout"
 
         # Route persistence: non-financial workflows → ToolRunOutput; financial → AccountsDB
         if workflow and workflow.key != "financial_scraper":
