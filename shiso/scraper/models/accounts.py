@@ -49,6 +49,7 @@ class FinancialAccount(Base):
     snapshots: Mapped[list["AccountSnapshot"]] = relationship(back_populates="financial_account")
     statements: Mapped[list["AccountStatement"]] = relationship(back_populates="financial_account")
     promo_periods: Mapped[list["PromoAprPeriod"]] = relationship(back_populates="financial_account")
+    rewards_programs: Mapped[list["RewardsProgram"]] = relationship(back_populates="financial_account")
     identifiers: Mapped[list["FinancialAccountIdentifier"]] = relationship(back_populates="financial_account")
     login_links: Mapped[list["FinancialAccountLogin"]] = relationship(back_populates="financial_account")
 
@@ -74,6 +75,7 @@ class AccountSnapshot(Base):
 
     financial_account: Mapped["FinancialAccount"] = relationship(back_populates="snapshots")
     scraper_login: Mapped[Optional["ScraperLogin"]] = relationship(back_populates="snapshots")
+    rewards_balances: Mapped[list["RewardsBalance"]] = relationship(back_populates="source_snapshot")
 
 
 class FinancialAccountIdentifier(Base):
@@ -202,3 +204,42 @@ class PromoAprPeriod(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     financial_account: Mapped["FinancialAccount"] = relationship(back_populates="promo_periods")
+
+
+class RewardsProgram(Base):
+    """A rewards program associated with a financial account (points, miles, cashback)."""
+    __tablename__ = "rewards_programs"
+    __table_args__ = (
+        UniqueConstraint("financial_account_id", "program_name", name="uq_rewards_program_account_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    financial_account_id: Mapped[int] = mapped_column(ForeignKey("financial_accounts.id"), nullable=False)
+    program_name: Mapped[str] = mapped_column(String, nullable=False)  # e.g., "Chase Ultimate Rewards", "Delta SkyMiles"
+    program_type: Mapped[str] = mapped_column(String, nullable=False, default="points")  # points | miles | cashback | other
+    unit_name: Mapped[Optional[str]] = mapped_column(String)  # e.g., "points", "miles", "%"
+    cents_per_unit: Mapped[Optional[float]] = mapped_column(Float)  # Valuation: e.g., 1.5 cents per point
+    display_icon_url: Mapped[Optional[str]] = mapped_column(String)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    financial_account: Mapped["FinancialAccount"] = relationship(back_populates="rewards_programs")
+    balances: Mapped[list["RewardsBalance"]] = relationship(back_populates="rewards_program", cascade="all, delete-orphan")
+
+
+class RewardsBalance(Base):
+    """A snapshot of rewards balance at a point in time."""
+    __tablename__ = "rewards_balances"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rewards_program_id: Mapped[int] = mapped_column(ForeignKey("rewards_programs.id", ondelete="CASCADE"), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    balance: Mapped[float] = mapped_column(Float, nullable=False)  # Raw balance in program units
+    monetary_value: Mapped[Optional[float]] = mapped_column(Float)  # Calculated USD value
+    expiration_date: Mapped[Optional[str]] = mapped_column(String)  # YYYY-MM-DD
+    source_snapshot_id: Mapped[Optional[int]] = mapped_column(ForeignKey("account_snapshots.id", ondelete="SET NULL"))
+    raw_extracted_json: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    rewards_program: Mapped["RewardsProgram"] = relationship(back_populates="balances")
+    source_snapshot: Mapped[Optional["AccountSnapshot"]] = relationship(back_populates="rewards_balances")

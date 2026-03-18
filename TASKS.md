@@ -2,7 +2,7 @@
 
 ## Tier 1: Do First (Reliability)
 
-- [ ] **Timeout per provider** — cap total wall-clock time per provider scrape, not just per-step. A stuck agent can burn through all 50 steps doing nothing useful ← **HIGH PRIORITY**
+- [x] **Timeout per provider** — cap total wall-clock time per provider scrape, not just per-step. A stuck agent can burn through all 50 steps doing nothing useful ← **HIGH PRIORITY**
 - [ ] **Retry with backoff** — if the agent fails on a provider, retry once before marking as failed (currently one-shot)
 - [ ] **Session health check** — before scraping, verify the browser profile isn't locked by another Chrome process (`_kill_stale_chrome` exists but is fragile)
 - [ ] **Credential validation** — warn on `shiso scrape` if any targeted logins are missing credentials, before launching Chrome
@@ -35,4 +35,9 @@
 
 ## Completed
 
-_Historical log of finished work_
+- **2026-03-17: Timeout per provider** — Added configurable `provider_timeout` (default 30 min) in `[agent]` config, per-provider override via `[providers.X]` config. Wall-clock timeout enforced via `asyncio.wait_for()`. On timeout:
+  - Browser session killed gracefully
+  - Sync run marked with status `"timeout"`
+  - Metrics include `timed_out`, `timeout_seconds`, `elapsed_seconds`
+  - Other providers continue running (no blocking)
+  - Log output shows `[PROVIDER] TIMEOUT: exceeded Xs limit after Y.Ys`

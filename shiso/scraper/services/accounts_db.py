@@ -21,6 +21,8 @@ from ..models.accounts import (
     FinancialAccountLogin,
     FinancialAccountType,
     PromoAprPeriod,
+    RewardsProgram,
+    RewardsBalance,
     ScraperLogin,
 )
 
@@ -713,6 +715,341 @@ class AccountsDB:
                 active=True,
             )
         )
+
+    # ========================================================================
+    # Rewards methods
+    # ========================================================================
+
+    def upsert_rewards_program(
+        self,
+        financial_account_id: int,
+        program_name: str,
+        *,
+        program_type: str = "points",
+        unit_name: str | None = None,
+        cents_per_unit: float | None = None,
+        display_icon_url: str | None = None,
+        active: bool = True,
+    ) -> RewardsProgram:
+        """Create or update a rewards program for an account."""
+        with self.session() as session:
+            program = (
+                session.query(RewardsProgram)
+                .filter_by(financial_account_id=financial_account_id, program_name=program_name)
+                .first()
+            )
+            if program:
+                # Update existing
+                if program_type is not None:
+                    program.program_type = program_type
+                if unit_name is not None:
+                    program.unit_name = unit_name
+                if cents_per_unit is not None:
+                    program.cents_per_unit = cents_per_unit
+                if display_icon_url is not None:
+                    program.display_icon_url = display_icon_url
+                program.active = active
+            else:
+                # Create new
+                program = RewardsProgram(
+                    financial_account_id=financial_account_id,
+                    program_name=program_name,
+                    program_type=program_type,
+                    unit_name=unit_name,
+                    cents_per_unit=cents_per_unit,
+                    display_icon_url=display_icon_url,
+                    active=active,
+                )
+                session.add(program)
+            session.commit()
+            session.refresh(program)
+            return program
+
+    def upsert_rewards_balance(
+        self,
+        rewards_program_id: int,
+        balance: float,
+        *,
+        monetary_value: float | None = None,
+        expiration_date: str | None = None,
+        source_snapshot_id: int | None = None,
+        raw_extracted_json: dict | None = None,
+        captured_at: datetime | None = None,
+    ) -> RewardsBalance:
+        """Record a rewards balance snapshot."""
+        if captured_at is None:
+            captured_at = datetime.utcnow()
+        with self.session() as session:
+            rewards_balance = RewardsBalance(
+                rewards_program_id=rewards_program_id,
+                captured_at=captured_at,
+                balance=balance,
+                monetary_value=monetary_value,
+                expiration_date=expiration_date,
+                source_snapshot_id=source_snapshot_id,
+                raw_extracted_json=raw_extracted_json,
+            )
+            session.add(rewards_balance)
+            session.commit()
+            session.refresh(rewards_balance)
+            return rewards_balance
+
+    def sync_rewards(
+        self,
+        financial_account_id: int,
+        rewards_data: list[dict],
+        *,
+        source_snapshot_id: int | None = None,
+        captured_at: datetime | None = None,
+    ) -> list[dict]:
+        """
+        Sync rewards data from a scrape result.
+
+        rewards_data should be a list of dicts with:
+        - program_name: str (required)
+        - balance: float (required)
+        - program_type: str (optional, default "points")
+        - unit_name: str (optional)
+        - cents_per_unit: float (optional)
+        - monetary_value: float (optional)
+        - expiration_date: str (optional, YYYY-MM-DD)
+
+        Returns list of saved rewards info.
+        """
+        if captured_at is None:
+            captured_at = datetime.utcnow()
+
+        results = []
+        with self.session() as session:
+            for rd in rewards_data:
+                program_name = rd.get("program_name")
+                balance = rd.get("balance")
+                if not program_name or balance is None:
+                    continue
+
+                # Get or create the program
+                program = (
+                    session.query(RewardsProgram)
+                    .filter_by(financial_account_id=financial_account_id, program_name=program_name)
+                    .first()
+                )
+                if not program:
+                    program = RewardsProgram(
+                        financial_account_id=financial_account_id,
+                        program_name=program_name,
+                        program_type=rd.get("program_type", "points"),
+                        unit_name=rd.get("unit_name"),
+                        cents_per_unit=rd.get("cents_per_unit"),
+                    )
+                    session.add(program)
+                    session.flush()
+                elif program.cents_per_unit is None and rd.get("cents_per_unit") is not None:
+                    program.cents_per_unit = rd["cents_per_unit"]
+
+                # Calculate monetary value if cents_per_unit is set
+                monetary_value = rd.get("monetary_value")
+                if monetary_value is None and program.cents_per_unit:
+                    monetary_value = balance * program.cents_per_unit / 100
+
+                # Create the balance snapshot
+                rewards_balance = RewardsBalance(
+                    rewards_program_id=program.id,
+                    captured_at=captured_at,
+                    balance=balance,
+                    monetary_value=monetary_value,
+                    expiration_date=rd.get("expiration_date"),
+                    source_snapshot_id=source_snapshot_id,
+                    raw_extracted_json=rd,
+                )
+                session.add(rewards_balance)
+                results.append({
+                    "program_id": program.id,
+                    "program_name": program_name,
+                    "balance": balance,
+                    "monetary_value": monetary_value,
+                    "expiration_date": rd.get("expiration_date"),
+                })
+
+            session.commit()
+        return results
+
+    def get_rewards_programs(self, financial_account_id: int | None = None) -> list[dict]:
+        """Get all rewards programs, optionally filtered by account."""
+        with self.session() as session:
+            query = session.query(RewardsProgram)
+            if financial_account_id is not None:
+                query = query.filter_by(financial_account_id=financial_account_id)
+            programs = query.order_by(RewardsProgram.program_name).all()
+            return [
+                {
+                    "id": p.id,
+                    "financial_account_id": p.financial_account_id,
+                    "program_name": p.program_name,
+                    "program_type": p.program_type,
+                    "unit_name": p.unit_name,
+                    "cents_per_unit": p.cents_per_unit,
+                    "display_icon_url": p.display_icon_url,
+                    "active": p.active,
+                    "created_at": p.created_at.isoformat() if p.created_at else None,
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                }
+                for p in programs
+            ]
+
+    def get_rewards_balances(
+        self,
+        rewards_program_id: int | None = None,
+        financial_account_id: int | None = None,
+        include_history: bool = False,
+        limit: int = 100,
+    ) -> list[dict]:
+        """
+        Get latest rewards balances.
+
+        If include_history is False (default), returns only the most recent balance per program.
+        If include_history is True, returns all balances up to limit.
+        """
+        with self.session() as session:
+            if include_history:
+                # Return all balances
+                query = session.query(RewardsBalance)
+                if rewards_program_id is not None:
+                    query = query.filter_by(rewards_program_id=rewards_program_id)
+                elif financial_account_id is not None:
+                    query = query.join(RewardsProgram).filter(
+                        RewardsProgram.financial_account_id == financial_account_id
+                    )
+                balances = query.order_by(RewardsBalance.captured_at.desc()).limit(limit).all()
+            else:
+                # Get latest balance per program
+                if rewards_program_id is not None:
+                    balances = [
+                        session.query(RewardsBalance)
+                        .filter_by(rewards_program_id=rewards_program_id)
+                        .order_by(RewardsBalance.captured_at.desc())
+                        .first()
+                    ]
+                    balances = [b for b in balances if b is not None]
+                elif financial_account_id is not None:
+                    # Subquery to get latest balance per program
+                    from sqlalchemy import func
+                    latest_subq = (
+                        session.query(
+                            RewardsBalance.rewards_program_id,
+                            func.max(RewardsBalance.captured_at).label("max_captured_at"),
+                        )
+                        .join(RewardsProgram)
+                        .filter(RewardsProgram.financial_account_id == financial_account_id)
+                        .group_by(RewardsBalance.rewards_program_id)
+                        .subquery()
+                    )
+                    balances = (
+                        session.query(RewardsBalance)
+                        .join(
+                            latest_subq,
+                            (RewardsBalance.rewards_program_id == latest_subq.c.rewards_program_id)
+                            & (RewardsBalance.captured_at == latest_subq.c.max_captured_at),
+                        )
+                        .all()
+                    )
+                else:
+                    # Get latest balance for all programs
+                    from sqlalchemy import func
+                    latest_subq = (
+                        session.query(
+                            RewardsBalance.rewards_program_id,
+                            func.max(RewardsBalance.captured_at).label("max_captured_at"),
+                        )
+                        .group_by(RewardsBalance.rewards_program_id)
+                        .subquery()
+                    )
+                    balances = (
+                        session.query(RewardsBalance)
+                        .join(
+                            latest_subq,
+                            (RewardsBalance.rewards_program_id == latest_subq.c.rewards_program_id)
+                            & (RewardsBalance.captured_at == latest_subq.c.max_captured_at),
+                        )
+                        .limit(limit)
+                        .all()
+                    )
+
+            return [
+                {
+                    "id": b.id,
+                    "rewards_program_id": b.rewards_program_id,
+                    "program_name": b.rewards_program.program_name if b.rewards_program else None,
+                    "program_type": b.rewards_program.program_type if b.rewards_program else None,
+                    "unit_name": b.rewards_program.unit_name if b.rewards_program else None,
+                    "captured_at": b.captured_at.isoformat() if b.captured_at else None,
+                    "balance": b.balance,
+                    "monetary_value": b.monetary_value,
+                    "expiration_date": b.expiration_date,
+                }
+                for b in balances
+            ]
+
+    def get_rewards_summary(self) -> dict:
+        """Get summary of all rewards (total monetary value grouped by type)."""
+        with self.session() as session:
+            from sqlalchemy import func
+
+            # Get latest balance per program
+            latest_subq = (
+                session.query(
+                    RewardsBalance.rewards_program_id,
+                    func.max(RewardsBalance.captured_at).label("max_captured_at"),
+                )
+                .join(RewardsProgram)
+                .filter(RewardsProgram.active == True)
+                .group_by(RewardsBalance.rewards_program_id)
+                .subquery()
+            )
+
+            balances = (
+                session.query(RewardsBalance, RewardsProgram, FinancialAccount)
+                .join(latest_subq,
+                    (RewardsBalance.rewards_program_id == latest_subq.c.rewards_program_id)
+                    & (RewardsBalance.captured_at == latest_subq.c.max_captured_at))
+                .join(RewardsProgram, RewardsBalance.rewards_program_id == RewardsProgram.id)
+                .join(FinancialAccount, RewardsProgram.financial_account_id == FinancialAccount.id)
+                .all()
+            )
+
+            total_value = 0.0
+            by_type: dict[str, dict] = {}
+            programs: list[dict] = []
+
+            for rb, rp, fa in balances:
+                value = rb.monetary_value or 0.0
+                total_value += value
+
+                type_key = rp.program_type or "other"
+                type_info = by_type.setdefault(type_key, {"count": 0, "total_value": 0.0, "total_balance": 0.0})
+                type_info["count"] += 1
+                type_info["total_value"] += value
+                type_info["total_balance"] += rb.balance or 0.0
+
+                programs.append({
+                    "program_id": rp.id,
+                    "program_name": rp.program_name,
+                    "program_type": rp.program_type,
+                    "account_id": fa.id,
+                    "account_display_name": fa.display_name,
+                    "account_mask": fa.account_mask,
+                    "institution": fa.institution,
+                    "balance": rb.balance,
+                    "monetary_value": rb.monetary_value,
+                    "unit_name": rp.unit_name,
+                    "cents_per_unit": rp.cents_per_unit,
+                    "expiration_date": rb.expiration_date,
+                })
+
+            return {
+                "total_monetary_value": total_value,
+                "by_type": by_type,
+                "programs": programs,
+            }
 
     def _account_dedupe_key(self, session: Session, account: FinancialAccount) -> tuple[str, str, str] | None:
         mask = _normalize_mask(account.account_mask)
