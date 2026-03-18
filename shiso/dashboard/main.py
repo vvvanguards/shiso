@@ -676,6 +676,89 @@ def list_tool_runs(tool_key: str, limit: int = 20):
         ]
 
 
+# ---------------------------------------------------------------------------
+# Interactive Auth
+# ---------------------------------------------------------------------------
+
+import subprocess
+import sys
+from pathlib import Path
+
+# Track running interactive auth sessions
+_interactive_auth_sessions: dict[int, subprocess.Popen] = {}
+
+
+@app.get("/api/logins/problems")
+def get_problem_logins():
+    """Get logins that need attention (needs_2fa or login_failed)."""
+    with scraper.SessionLocal() as session:
+        logins = (
+            session.query(scraper.ScraperLogin)
+            .filter(scraper.ScraperLogin.last_auth_status.in_(["needs_2fa", "login_failed"]))
+            .order_by(scraper.ScraperLogin.provider_key)
+            .all()
+        )
+        return [_login_to_response(l) for l in logins]
+
+
+@app.post("/api/logins/{login_id}/interactive")
+def start_interactive_auth(login_id: int):
+    """Start an interactive auth session for a login that needs 2FA or failed.
+
+    This spawns a browser-use agent to attempt login with human assistance for 2FA.
+    Returns immediately with a status; poll GET /api/logins/{login_id} for updates.
+    """
+    with scraper.SessionLocal() as session:
+        login = session.get(scraper.ScraperLogin, login_id)
+        if not login:
+            raise HTTPException(status_code=404, detail="Login not found")
+        if not login.enabled:
+            raise HTTPException(status_code=400, detail="Login is disabled")
+
+        provider_key = login.provider_key
+
+    # Check if already running
+    if login_id in _interactive_auth_sessions:
+        proc = _interactive_auth_sessions[login_id]
+        if proc.poll() is None:
+            return {"status": "running", "message": f"Interactive auth already in progress for {provider_key}"}
+
+    # Run the auth CLI as a subprocess
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "shiso.scraper.agent.auth", "login", provider_key],
+            cwd=str(Path(__file__).parent.parent.parent),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        _interactive_auth_sessions[login_id] = proc
+
+        return {"status": "started", "message": f"Interactive auth started for {provider_key}. Check browser window for login prompts."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start interactive auth: {str(e)}")
+
+
+@app.get("/api/logins/{login_id}/interactive")
+def get_interactive_auth_status(login_id: int):
+    """Check if an interactive auth session is still running."""
+    if login_id not in _interactive_auth_sessions:
+        return {"status": "idle", "message": "No interactive auth session running"}
+
+    proc = _interactive_auth_sessions[login_id]
+    poll_result = proc.poll()
+
+    if poll_result is None:
+        return {"status": "running", "message": "Interactive auth in progress. Check browser window."}
+
+    # Process finished - clean up
+    del _interactive_auth_sessions[login_id]
+
+    if poll_result == 0:
+        return {"status": "completed", "message": "Interactive auth completed successfully. Refresh to see updated status."}
+    else:
+        return {"status": "failed", "message": f"Interactive auth exited with code {poll_result}"}
+
+
 scraper.init_db()
 
 if __name__ == "__main__":
