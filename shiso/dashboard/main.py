@@ -676,6 +676,220 @@ def list_tool_runs(tool_key: str, limit: int = 20):
         ]
 
 
+# ---------------------------------------------------------------------------
+# Interactive Auth
+# ---------------------------------------------------------------------------
+
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+# Track running interactive auth sessions (thread-safe)
+_interactive_auth_sessions: dict[int, subprocess.Popen] = {}
+_interactive_auth_lock = threading.Lock()
+
+
+def _cleanup_old_process(login_id: int) -> None:
+    """Clean up a finished process from memory."""
+    if login_id in _interactive_auth_sessions:
+        proc = _interactive_auth_sessions[login_id]
+        if proc.poll() is not None:
+            del _interactive_auth_sessions[login_id]
+
+
+@app.get("/api/logins/problems")
+def get_problem_logins():
+    """Get logins that need attention (needs_2fa or login_failed)."""
+    with scraper.SessionLocal() as session:
+        logins = (
+            session.query(scraper.ScraperLogin)
+            .filter(scraper.ScraperLogin.last_auth_status.in_(["needs_2fa", "login_failed"]))
+            .order_by(scraper.ScraperLogin.provider_key)
+            .all()
+        )
+        return [_login_to_response(l) for l in logins]
+
+
+@app.post("/api/logins/{login_id}/interactive")
+def start_interactive_auth(login_id: int):
+    """Start an interactive auth session for a login that needs 2FA or failed.
+
+    This spawns a browser-use agent to attempt login with human assistance for 2FA.
+    Returns immediately with a status; poll GET /api/logins/{login_id}/interactive for updates.
+    """
+    with scraper.SessionLocal() as session:
+        login = session.get(scraper.ScraperLogin, login_id)
+        if not login:
+            raise HTTPException(status_code=404, detail="Login not found")
+        if not login.enabled:
+            raise HTTPException(status_code=400, detail="Login is disabled")
+
+        provider_key = login.provider_key
+
+    with _interactive_auth_lock:
+        # Clean up any finished process for this login
+        _cleanup_old_process(login_id)
+
+        # Check if already running
+        if login_id in _interactive_auth_sessions:
+            return {"status": "running", "message": f"Interactive auth already in progress for {provider_key}"}
+
+        # Run the auth CLI as a subprocess (inherit stdout/stderr to avoid pipe deadlock)
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "shiso.scraper.agent.auth", "login", provider_key],
+                cwd=str(Path(__file__).parent.parent.parent),
+            )
+            _interactive_auth_sessions[login_id] = proc
+            return {"status": "started", "message": f"Interactive auth started for {provider_key}. Check browser window for login prompts."}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to start interactive auth: {str(e)}")
+
+
+@app.get("/api/logins/{login_id}/interactive")
+def get_interactive_auth_status(login_id: int):
+    """Check if an interactive auth session is still running."""
+    with _interactive_auth_lock:
+        if login_id not in _interactive_auth_sessions:
+            return {"status": "idle", "message": "No interactive auth session running"}
+
+        proc = _interactive_auth_sessions[login_id]
+        poll_result = proc.poll()
+
+        if poll_result is None:
+            return {"status": "running", "message": "Interactive auth in progress. Check browser window."}
+
+        # Process finished - clean up
+        del _interactive_auth_sessions[login_id]
+
+        if poll_result == 0:
+            return {"status": "completed", "message": "Interactive auth completed successfully. Refresh to see updated status."}
+        else:
+            return {"status": "failed", "message": f"Interactive auth exited with code {poll_result}"}
+
+
+# ---------------------------------------------------------------------------
+# Rewards Programs
+# ---------------------------------------------------------------------------
+
+class RewardsProgramBase(BaseModel):
+    financial_account_id: int
+    program_name: str
+    program_type: str = "points"
+    unit_name: Optional[str] = None
+    cents_per_unit: Optional[float] = None
+    active: bool = True
+
+
+class RewardsProgramResponse(RewardsProgramBase):
+    id: int
+    display_icon_url: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+@app.get("/api/rewards", response_model=list[RewardsProgramResponse])
+def list_rewards_programs():
+    """List all rewards programs."""
+    with scraper.SessionLocal() as session:
+        programs = session.query(scraper.RewardsProgram).order_by(scraper.RewardsProgram.program_name).all()
+        return [
+            RewardsProgramResponse(
+                id=p.id,
+                financial_account_id=p.financial_account_id,
+                program_name=p.program_name,
+                program_type=p.program_type,
+                unit_name=p.unit_name,
+                cents_per_unit=p.cents_per_unit,
+                display_icon_url=p.display_icon_url,
+                active=p.active,
+                created_at=p.created_at.isoformat(),
+                updated_at=p.updated_at.isoformat(),
+            )
+            for p in programs
+        ]
+
+
+@app.post("/api/rewards", response_model=RewardsProgramResponse, status_code=201)
+def create_rewards_program(data: RewardsProgramBase):
+    """Create a new rewards program."""
+    with scraper.SessionLocal() as session:
+        account = session.get(scraper.FinancialAccount, data.financial_account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
+        program = scraper.RewardsProgram(
+            financial_account_id=data.financial_account_id,
+            program_name=data.program_name,
+            program_type=data.program_type,
+            unit_name=data.unit_name,
+            cents_per_unit=data.cents_per_unit,
+            active=data.active,
+        )
+        session.add(program)
+        session.commit()
+        session.refresh(program)
+        return RewardsProgramResponse(
+            id=program.id,
+            financial_account_id=program.financial_account_id,
+            program_name=program.program_name,
+            program_type=program.program_type,
+            unit_name=program.unit_name,
+            cents_per_unit=program.cents_per_unit,
+            display_icon_url=program.display_icon_url,
+            active=program.active,
+            created_at=program.created_at.isoformat(),
+            updated_at=program.updated_at.isoformat(),
+        )
+
+
+@app.put("/api/rewards/{program_id}", response_model=RewardsProgramResponse)
+def update_rewards_program(program_id: int, data: RewardsProgramBase):
+    """Update a rewards program."""
+    with scraper.SessionLocal() as session:
+        program = session.get(scraper.RewardsProgram, program_id)
+        if not program:
+            raise HTTPException(status_code=404, detail="Rewards program not found")
+        program.financial_account_id = data.financial_account_id
+        program.program_name = data.program_name
+        program.program_type = data.program_type
+        program.unit_name = data.unit_name
+        program.cents_per_unit = data.cents_per_unit
+        program.active = data.active
+        session.commit()
+        session.refresh(program)
+        return RewardsProgramResponse(
+            id=program.id,
+            financial_account_id=program.financial_account_id,
+            program_name=program.program_name,
+            program_type=program.program_type,
+            unit_name=program.unit_name,
+            cents_per_unit=program.cents_per_unit,
+            display_icon_url=program.display_icon_url,
+            active=program.active,
+            created_at=program.created_at.isoformat(),
+            updated_at=program.updated_at.isoformat(),
+        )
+
+
+@app.delete("/api/rewards/{program_id}")
+def delete_rewards_program(program_id: int):
+    """Delete a rewards program."""
+    with scraper.SessionLocal() as session:
+        program = session.get(scraper.RewardsProgram, program_id)
+        if not program:
+            raise HTTPException(status_code=404, detail="Rewards program not found")
+        session.delete(program)
+        session.commit()
+        return {"ok": True}
+
+
+@app.get("/api/rewards/summary")
+def get_rewards_summary():
+    """Get summary of all rewards programs with latest balances."""
+    return db.get_rewards_summary()
+
+
 scraper.init_db()
 
 if __name__ == "__main__":

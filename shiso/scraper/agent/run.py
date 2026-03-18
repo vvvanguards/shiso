@@ -126,7 +126,9 @@ async def run_scrapers(
             persisted_results[name] = sync.persisted
             all_metrics[name] = sync.metrics
 
-            if sync.error:
+            if sync.timed_out:
+                print(f"[{name}] TIMEOUT: {sync.error}")
+            elif sync.error:
                 print(f"[{name}] FAILED: {sync.error}")
             else:
                 print(f"[{name}] Persisted {len(sync.persisted)} snapshot(s)")

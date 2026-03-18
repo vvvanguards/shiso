@@ -1,9 +1,7 @@
-"""
-Public API for the scraper package.
-
-The dashboard (and any other consumer) should import from here
-instead of reaching into scraper internals.
-"""
+# Public API for the scraper package.
+#
+# The dashboard (and any other consumer) should import from here
+# instead of reaching into scraper internals.
 
 from pathlib import Path
 
@@ -16,6 +14,8 @@ from .database import SessionLocal, init_db
 from .models.accounts import (
     FinancialAccount,
     PromoAprPeriod,
+    RewardsProgram,
+    RewardsBalance,
     ScraperLogin,
     ScraperLoginSyncRun,
 )
@@ -47,6 +47,8 @@ __all__ = [
     # Models
     "FinancialAccount",
     "PromoAprPeriod",
+    "RewardsProgram",
+    "RewardsBalance",
     "ScraperLogin",
     "ScraperLoginSyncRun",
     "ToolRunOutput",

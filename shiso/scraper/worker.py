@@ -25,7 +25,11 @@ POLL_INTERVAL = 3  # seconds
 
 
 def _cleanup_stale_runs() -> int:
-    """Mark any 'running' sync runs as failed (leftover from crash/restart)."""
+    """Mark any 'running' sync runs as failed (leftover from crash/restart).
+    
+    Note: 'timeout' status is excluded because it's already a terminal state -
+    the run completed (with timeout) and results were persisted.
+    """
     now = datetime.utcnow()
     count = 0
     with SessionLocal() as session:

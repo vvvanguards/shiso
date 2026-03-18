@@ -44,6 +44,38 @@
         </Card>
       </div>
 
+      <!-- Problem Logins Alert -->
+      <div v-if="problemLoginsDerived.length > 0" class="bg-red-950/50 border border-red-800 rounded-lg p-4">
+        <div class="flex items-start gap-3">
+          <i class="pi pi-exclamation-triangle text-red-400 text-xl mt-0.5" />
+          <div class="flex-1">
+            <h3 class="text-lg font-semibold text-red-300 mb-2">Attention Required</h3>
+            <p class="text-sm text-red-200 mb-3">
+              {{ problemLoginsDerived.length }} login(s) need authentication. Interactive login required to sync these accounts.
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <div v-for="login in problemLoginsDerived" :key="login.id" class="flex items-center gap-2 bg-surface-900 rounded px-3 py-2">
+                <Tag 
+                  :value="login.last_auth_status === 'needs_2fa' ? '2FA Required' : 'Login Failed'" 
+                  :severity="login.last_auth_status === 'needs_2fa' ? 'warn' : 'danger'" 
+                />
+                <span class="font-medium">{{ login.institution || login.provider_key }}</span>
+                <span class="text-xs text-surface-400">{{ login.username || login.label }}</span>
+                <Button 
+                  @click="startInteractiveAuthForLogin(login)" 
+                  :loading="interactiveAuthLoading[login.id]"
+                  :disabled="interactiveAuthLoading[login.id]"
+                  label="Retry Interactive" 
+                  icon="pi pi-sign-in" 
+                  severity="success" 
+                  size="small"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Global search -->
       <div class="flex justify-end">
         <IconField>
@@ -105,6 +137,50 @@
         </DataTable>
         <div v-else class="py-4 text-center text-surface-400">
           No promo periods tracked. <Button @click="openPromoDialog()" label="Add one" severity="secondary" size="small" text />
+        </div>
+      </Section>
+
+      <!-- Rewards Tracker -->
+      <Section v-if="rewards.length || !loading" header="Rewards" :count="rewards.length" persistKey="rewards" class="rewards-panel">
+        <template #icons>
+          <Button @click.stop="openRewardsDialog()" icon="pi pi-plus" severity="success" size="small" text rounded v-tooltip.top="'Add rewards program'" />
+        </template>
+        <DataTable :value="rewards" stripedRows size="small" sortField="program_type" :sortOrder="1" v-if="rewards.length">
+          <Column header="Account">
+            <template #body="{ data }">
+              <div class="font-medium">{{ data.account_display_name || data.institution }}</div>
+              <div v-if="data.account_mask" class="text-xs text-surface-400">••{{ data.account_mask }}</div>
+            </template>
+          </Column>
+          <Column field="program_name" header="Program" sortable>
+            <template #body="{ data }">
+              <div class="font-medium">{{ data.program_name }}</div>
+              <div class="text-xs text-surface-400">{{ data.program_type }}</div>
+            </template>
+          </Column>
+          <Column field="balance" header="Balance" sortable>
+            <template #body="{ data }">
+              <span class="font-semibold">{{ formatRewardsBalance(data.balance, data.unit_name, data.program_type) }}</span>
+              <div v-if="data.cents_per_unit" class="text-xs text-surface-400">≈ ${{ formatMoney(data.monetary_value || 0) }}</div>
+            </template>
+          </Column>
+          <Column field="monetary_value" header="Value" sortable>
+            <template #body="{ data }">
+              <span v-if="data.monetary_value != null" class="text-green-400 font-semibold">{{ money(data.monetary_value) }}</span>
+              <span v-else class="text-surface-500">—</span>
+            </template>
+          </Column>
+          <Column header="" style="width: 4rem">
+            <template #body="{ data }">
+              <Button @click="openRewardsDialog(data)" icon="pi pi-pencil" severity="secondary" text rounded size="small" v-tooltip.top="'Edit program'" />
+            </template>
+          </Column>
+          <template #empty>
+            <div class="py-6 text-center text-surface-400">No rewards programs tracked.</div>
+          </template>
+        </DataTable>
+        <div v-else class="py-4 text-center text-surface-400">
+          No rewards programs tracked. <Button @click="openRewardsDialog()" label="Add one" severity="secondary" size="small" text />
         </div>
       </Section>
 
@@ -406,11 +482,43 @@
         <Button @click="saveLogin" :label="loginDialogEdit ? 'Update' : 'Create'" severity="success" />
       </template>
     </Dialog>
+
+    <!-- Rewards Dialog -->
+    <Dialog v-model:visible="rewardsDialogVisible" :header="rewardsDialogEdit ? 'Edit Rewards Program' : 'Add Rewards Program'" modal :style="{ width: '480px' }">
+      <div class="flex flex-col gap-4 pt-2">
+        <div class="flex flex-col gap-1">
+          <label class="text-sm font-medium">Account</label>
+          <Select v-model="rewardsForm.financial_account_id" :options="accountsList" optionLabel="label" optionValue="id" placeholder="Select account" fluid />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm font-medium">Program Name</label>
+          <InputText v-model="rewardsForm.program_name" placeholder="e.g. Chase Ultimate Rewards" fluid />
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium">Type</label>
+            <Select v-model="rewardsForm.program_type" :options="rewardsTypes" optionLabel="label" optionValue="value" fluid />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium">Unit Name</label>
+            <InputText v-model="rewardsForm.unit_name" placeholder="points, miles, etc." fluid />
+          </div>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm font-medium">Cents per Unit (for valuation)</label>
+          <InputText v-model="rewardsForm.cents_per_unit" type="number" step="0.01" placeholder="e.g. 1.5 for 1.5¢/point" fluid />
+        </div>
+      </div>
+      <template #footer>
+        <Button @click="rewardsDialogVisible = false" label="Cancel" severity="secondary" text />
+        <Button @click="saveRewardsProgram" :label="rewardsDialogEdit ? 'Update' : 'Create'" severity="success" />
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, reactive } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import { useConfirm } from 'primevue/useconfirm'
 import { FilterMatchMode } from '@primevue/core/api'
@@ -433,6 +541,12 @@ import {
   fetchAccountTypes,
   fetchTools,
   fetchToolRuns,
+  fetchProblemLogins,
+  startInteractiveAuth,
+  fetchRewardsPrograms,
+  createRewardsProgram,
+  updateRewardsProgram,
+  fetchRewardsSummary,
 } from './api.js'
 import { money, signedMoney, relativeTime, typeSeverity, isDueSoon } from './helpers.js'
 
@@ -481,6 +595,16 @@ const loginEditId = ref(null)
 const loginForm = ref(defaultLoginForm())
 const accountTypes = ref([])
 
+// Problem logins (needs_2fa, login_failed)
+const problemLogins = ref([])
+const interactiveAuthLoading = reactive({})
+
+// Computed: derive from logins if not fetched separately
+const problemLoginsDerived = computed(() => {
+  if (problemLogins.value.length > 0) return problemLogins.value
+  return logins.value.filter(l => l.last_auth_status === 'needs_2fa' || l.last_auth_status === 'login_failed')
+})
+
 const promos = ref([])
 const accountsList = ref([])
 const tools = ref([])
@@ -495,6 +619,34 @@ const promoTypes = [
   { label: 'Balance Transfer', value: 'balance_transfer' },
   { label: 'General', value: 'general' },
 ]
+
+const rewardsDialogVisible = ref(false)
+const rewardsDialogEdit = ref(false)
+const rewardsEditId = ref(null)
+const rewardsForm = ref(defaultRewardsForm())
+const rewardsTypes = [
+  { label: 'Points', value: 'points' },
+  { label: 'Miles', value: 'miles' },
+  { label: 'Cashback', value: 'cashback' },
+  { label: 'Other', value: 'other' },
+]
+const rewards = ref([])
+
+function defaultRewardsForm() {
+  return { financial_account_id: null, program_name: '', program_type: 'points', unit_name: '', cents_per_unit: null }
+}
+
+function formatRewardsBalance(balance, unitName, programType) {
+  if (programType === 'cashback') {
+    return `$${(balance || 0).toFixed(2)}`
+  }
+  const unit = unitName || (programType === 'miles' ? 'miles' : 'points')
+  return `${(balance || 0).toLocaleString()} ${unit}`
+}
+
+function formatMoney(val) {
+  return (val || 0).toFixed(2)
+}
 
 function defaultPromoForm() {
   return { financial_account_id: null, promo_type: 'purchase', apr_rate: 0, regular_apr: null, start_date: '', end_date: '', original_amount: null, description: '' }
@@ -560,7 +712,7 @@ async function loadAll() {
   statusMessage.value = ''
   statusError.value = false
   try {
-    const [dashboard, l, p, types, t, promosData, accounts] = await Promise.all([
+    const [dashboard, l, p, types, t, promosData, accounts, rewardsData] = await Promise.all([
       fetchDashboard(),
       fetchLogins(),
       fetchProviders(),
@@ -568,6 +720,7 @@ async function loadAll() {
       fetchTools(),
       fetchPromos(true).catch(() => []),
       fetchAccountsList().catch(() => []),
+      fetchRewardsSummary().catch(() => ({ programs: [] })),
     ])
     snapshots.value = dashboard.snapshots
     summary.value = dashboard.summary
@@ -577,6 +730,7 @@ async function loadAll() {
     tools.value = t
     promos.value = promosData
     accountsList.value = accounts.map(a => ({ id: a.id, label: `${a.institution} — ${a.display_name || a.account_mask || 'Unnamed'}` }))
+    rewards.value = rewardsData.programs || []
   } catch (err) {
     statusMessage.value = err.message
     statusError.value = true
@@ -589,6 +743,11 @@ async function loadAll() {
 async function loadLogins() {
   try {
     logins.value = await fetchLogins()
+    try {
+      problemLogins.value = await fetchProblemLogins()
+    } catch {
+      problemLogins.value = []
+    }
   } catch (err) { toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 }) }
 }
 
@@ -613,6 +772,21 @@ async function syncEnabledLogins() {
     toast.add({ severity: 'error', summary: 'Sync Failed', detail: err.message, life: 5000 })
   } finally {
     syncingAllLogins.value = false
+  }
+}
+
+async function startInteractiveAuthForLogin(login) {
+  interactiveAuthLoading[login.id] = true
+  try {
+    const result = await startInteractiveAuth(login.id)
+    toast.add({ severity: 'info', summary: 'Interactive Auth Started', detail: result.message, life: 5000 })
+    setTimeout(async () => {
+      await loadLogins()
+    }, 3000)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Failed to Start', detail: err.message, life: 5000 })
+  } finally {
+    interactiveAuthLoading[login.id] = false
   }
 }
 
@@ -767,6 +941,45 @@ function promoUrgencyClass(daysRemaining) {
   if (daysRemaining <= 30) return 'text-red-400 font-semibold'
   if (daysRemaining <= 90) return 'text-amber-400'
   return ''
+}
+
+function openRewardsDialog(rewards = null) {
+  if (rewards) {
+    rewardsDialogEdit.value = true
+    rewardsEditId.value = rewards.program_id
+    rewardsForm.value = {
+      financial_account_id: rewards.account_id,
+      program_name: rewards.program_name,
+      program_type: rewards.program_type || 'points',
+      unit_name: rewards.unit_name || '',
+      cents_per_unit: rewards.cents_per_unit,
+    }
+  } else {
+    rewardsDialogEdit.value = false
+    rewardsEditId.value = null
+    rewardsForm.value = defaultRewardsForm()
+  }
+  rewardsDialogVisible.value = true
+}
+
+async function saveRewardsProgram() {
+  const data = {
+    ...rewardsForm.value,
+    cents_per_unit: rewardsForm.value.cents_per_unit ? parseFloat(rewardsForm.value.cents_per_unit) : null,
+  }
+  try {
+    if (rewardsDialogEdit.value) {
+      await updateRewardsProgram(rewardsEditId.value, data)
+      toast.add({ severity: 'success', summary: 'Updated', detail: 'Rewards program updated', life: 3000 })
+    } else {
+      await createRewardsProgram(data)
+      toast.add({ severity: 'success', summary: 'Created', detail: 'Rewards program added', life: 3000 })
+    }
+    rewardsDialogVisible.value = false
+    await loadAll()
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
+  }
 }
 
 // Helpers (shared helpers in helpers.js, these are App-specific)
