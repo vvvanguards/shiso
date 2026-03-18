@@ -429,8 +429,8 @@
           </div>
         </div>
         <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Cents per Unit (forvaluation)</label>
-          <InputText v-model="rewardsForm.cents_per_unit" type="number" step="0.01" placeholder="e.g. 1.5for 1.5¢/point" fluid />
+          <label class="text-sm font-medium">Cents per Unit (for valuation)</label>
+          <InputText v-model="rewardsForm.cents_per_unit" type="number" step="0.01" placeholder="e.g. 1.5 for 1.5¢/point" fluid />
         </div>
       </div>
       <template #footer>
@@ -465,6 +465,9 @@ import {
   fetchAccountTypes,
   fetchTools,
   fetchToolRuns,
+  fetchRewardsPrograms,
+  createRewardsProgram,
+  updateRewardsProgram,
 } from './api.js'
 import { money, signedMoney, relativeTime, typeSeverity, isDueSoon } from './helpers.js'
 
@@ -527,6 +530,21 @@ const promoTypes = [
   { label: 'Balance Transfer', value: 'balance_transfer' },
   { label: 'General', value: 'general' },
 ]
+
+const rewardsDialogVisible = ref(false)
+const rewardsDialogEdit = ref(false)
+const rewardsEditId = ref(null)
+const rewardsForm = ref(defaultRewardsForm())
+const rewardsTypes = [
+  { label: 'Points', value: 'points' },
+  { label: 'Miles', value: 'miles' },
+  { label: 'Cashback', value: 'cashback' },
+  { label: 'Other', value: 'other' },
+]
+
+function defaultRewardsForm() {
+  return { financial_account_id: null, program_name: '', program_type: 'points', unit_name: '', cents_per_unit: null }
+}
 
 function defaultPromoForm() {
   return { financial_account_id: null, promo_type: 'purchase', apr_rate: 0, regular_apr: null, start_date: '', end_date: '', original_amount: null, description: '' }
@@ -799,6 +817,45 @@ function promoUrgencyClass(daysRemaining) {
   if (daysRemaining <= 30) return 'text-red-400 font-semibold'
   if (daysRemaining <= 90) return 'text-amber-400'
   return ''
+}
+
+function openRewardsDialog(rewards = null) {
+  if (rewards) {
+    rewardsDialogEdit.value = true
+    rewardsEditId.value = rewards.id
+    rewardsForm.value = {
+      financial_account_id: rewards.financial_account_id,
+      program_name: rewards.program_name,
+      program_type: rewards.program_type,
+      unit_name: rewards.unit_name || '',
+      cents_per_unit: rewards.cents_per_unit,
+    }
+  } else {
+    rewardsDialogEdit.value = false
+    rewardsEditId.value = null
+    rewardsForm.value = defaultRewardsForm()
+  }
+  rewardsDialogVisible.value = true
+}
+
+async function saveRewardsProgram() {
+  const data = {
+    ...rewardsForm.value,
+    cents_per_unit: rewardsForm.value.cents_per_unit ? parseFloat(rewardsForm.value.cents_per_unit) : null,
+  }
+  try {
+    if (rewardsDialogEdit.value) {
+      await updateRewardsProgram(rewardsEditId.value, data)
+      toast.add({ severity: 'success', summary: 'Updated', detail: 'Rewards program updated', life: 3000 })
+    } else {
+      await createRewardsProgram(data)
+      toast.add({ severity: 'success', summary: 'Created', detail: 'Rewards program added', life: 3000 })
+    }
+    rewardsDialogVisible.value = false
+    await loadAll()
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
+  }
 }
 
 // Helpers (shared helpers in helpers.js, these are App-specific)
