@@ -708,7 +708,7 @@ class AccountsDB:
         session.add(
             PromoAprPeriod(
                 financial_account_id=account.id,
-                promo_type="purchase",  # default; can be refined later
+                promo_type=row.get("promo_type") or "purchase",
                 apr_rate=apr_rate,
                 regular_apr=row.get("regular_apr"),
                 end_date=end_date,
