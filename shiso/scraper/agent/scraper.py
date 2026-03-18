@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -111,6 +112,11 @@ from ..tools.workflows import Workflow
 from dataclasses import dataclass, field
 
 
+class ProviderTimeoutError(Exception):
+    """Raised when a provider scrape exceeds its wall-clock timeout."""
+    pass
+
+
 @dataclass
 class ScrapeMetrics:
     """Structured metrics from a scraper run — no log parsing needed."""
@@ -118,6 +124,9 @@ class ScrapeMetrics:
     steps_taken: int = 0
     failed_actions: int = 0
     errors: list[str] = field(default_factory=list)
+    timed_out: bool = False
+    timeout_seconds: float | None = None
+    elapsed_seconds: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,6 +134,9 @@ class ScrapeMetrics:
             "steps_taken": self.steps_taken,
             "failed_actions": self.failed_actions,
             "errors": self.errors,
+            "timed_out": self.timed_out,
+            "timeout_seconds": self.timeout_seconds,
+            "elapsed_seconds": self.elapsed_seconds,
         }
 
 
@@ -765,6 +777,9 @@ async def scrape_provider(
     provider_cfg = config.get("providers", {}).get(provider_key, {})
     stmt_cfg = config.get("statements", {})
 
+    # Get timeout config (default 30 minutes), allow per-provider override
+    provider_timeout = provider_cfg.get("timeout", agent_cfg.get("provider_timeout", 1800))
+
     ctx = ScrapeContext(
         provider_key=provider_key,
         interactive=interactive,
@@ -807,217 +822,235 @@ async def scrape_provider(
     llm = _build_llm(config, agent_cfg=agent_cfg)
     all_accounts: list[dict[str, Any]] = []
     metrics = ScrapeMetrics()
+    metrics.timeout_seconds = provider_timeout
 
-    for login in logins:
-        login_id = login.get("id")
-        label = login.get("label", provider_key)
-        username = login.get("username", "")
-        password = login.get("password", "")
+    async def _run_scrape_with_timeout():
+        """Inner function that does the actual scraping, wrapped by timeout."""
+        for login in logins:
+            login_id = login.get("id")
+            label = login.get("label", provider_key)
+            username = login.get("username", "")
+            password = login.get("password", "")
 
-        if not username:
-            if on_log:
-                on_log(f"[{provider_key}] Skipping {label}: no username")
-            continue
-
-        start_url = provider_cfg.get("start_url", login.get("login_url", ""))
-        dashboard_url = str(provider_cfg.get("dashboard_url") or "").strip() or None
-        account_type = login.get("account_type")
-        extraction_prompt = get_extraction_prompt(provider_key, account_type)
-        hints = load_provider_hints(provider_key)
-
-        if on_log:
-            on_log(f"[{provider_key}] Scraping as {label}...")
-
-        # Resolve workflow — default to financial_scraper
-        from ..tools.workflows import get_workflow as _get_wf, FINANCIAL_WORKFLOW
-        active_wf = workflow or _get_wf("financial_scraper") or FINANCIAL_WORKFLOW
-        output_schema = active_wf.output_schema
-        task = _build_task(provider_key, provider_cfg, dashboard_url, active_wf, extraction_prompt)
-
-        tools = _build_tools(interactive=interactive)
-
-        agent = Agent(
-            task=task,
-            llm=llm,
-            browser_session=browser_session,
-            tools=tools,
-            use_vision=True,
-            max_steps=agent_cfg.get("max_steps", 50),
-            max_failures=agent_cfg.get("max_failures", 3),
-            max_actions_per_step=agent_cfg.get("max_actions_per_step", 3),
-            extend_system_message=_format_hints(hints),
-            output_model_schema=output_schema,
-            sensitive_data={"x_username": username, "x_password": password},
-            directly_open_url=start_url,
-        )
-
-        try:
-            history = await agent.run(
-                on_step_end=lambda a: _on_step(a, on_log),
-            )
-
-            # Collect metrics from agent history
-            metrics.steps_taken += agent.state.n_steps if hasattr(agent, "state") else 0
-            errors = history.errors() if history else []
-            metrics.failed_actions += sum(1 for e in errors if e)
-
-            # Early exit if login failure was detected in step callback
-            if getattr(agent, "_login_failed", False):
-                _update_auth_status(login_id, "login_failed")
-                metrics.errors.append(f"{label}: login failed — bad credentials")
+            if not username:
                 if on_log:
-                    on_log(f"[{provider_key}] {label}: login failed — check credentials")
+                    on_log(f"[{provider_key}] Skipping {label}: no username")
                 continue
 
-            # --- Pass 1: extract accounts from overview ---
-            result = history.get_structured_output(output_schema)
-            login_accounts: list[dict] = []
-            if result:
-                result_dict = result.model_dump()
-                # Use the workflow's result_key to extract the list
-                login_accounts = result_dict.get(active_wf.result_key, [])
+            start_url = provider_cfg.get("start_url", login.get("login_url", ""))
+            dashboard_url = str(provider_cfg.get("dashboard_url") or "").strip() or None
+            account_type = login.get("account_type")
+            extraction_prompt = get_extraction_prompt(provider_key, account_type)
+            hints = load_provider_hints(provider_key)
+
+            if on_log:
+                on_log(f"[{provider_key}] Scraping as {label}...")
+
+            # Resolve workflow — default to financial_scraper
+            from ..tools.workflows import get_workflow as _get_wf, FINANCIAL_WORKFLOW
+            active_wf = workflow or _get_wf("financial_scraper") or FINANCIAL_WORKFLOW
+            output_schema = active_wf.output_schema
+            task = _build_task(provider_key, provider_cfg, dashboard_url, active_wf, extraction_prompt)
+
+            tools = _build_tools(interactive=interactive)
+
+            agent = Agent(
+                task=task,
+                llm=llm,
+                browser_session=browser_session,
+                tools=tools,
+                use_vision=True,
+                max_steps=agent_cfg.get("max_steps", 50),
+                max_failures=agent_cfg.get("max_failures", 3),
+                max_actions_per_step=agent_cfg.get("max_actions_per_step", 3),
+                extend_system_message=_format_hints(hints),
+                output_model_schema=output_schema,
+                sensitive_data={"x_username": username, "x_password": password},
+                directly_open_url=start_url,
+            )
+
+            try:
+                history = await agent.run(
+                    on_step_end=lambda a: _on_step(a, on_log),
+                )
+
+                # Collect metrics from agent history
+                metrics.steps_taken += agent.state.n_steps if hasattr(agent, "state") else 0
+                errors = history.errors() if history else []
+                metrics.failed_actions += sum(1 for e in errors if e)
+
+                # Early exit if login failure was detected in step callback
+                if getattr(agent, "_login_failed", False):
+                    _update_auth_status(login_id, "login_failed")
+                    metrics.errors.append(f"{label}: login failed — bad credentials")
+                    if on_log:
+                        on_log(f"[{provider_key}] {label}: login failed — check credentials")
+                    continue
+
+                # --- Pass 1: extract accounts from overview ---
+                result = history.get_structured_output(output_schema)
+                login_accounts: list[dict] = []
+                if result:
+                    result_dict = result.model_dump()
+                    # Use the workflow's result_key to extract the list
+                    login_accounts = result_dict.get(active_wf.result_key, [])
+                    if not login_accounts:
+                        # Fallback: find first list field
+                        login_accounts = next((v for v in result_dict.values() if isinstance(v, list)), []) or []
                 if not login_accounts:
-                    # Fallback: find first list field
-                    login_accounts = next((v for v in result_dict.values() if isinstance(v, list)), []) or []
-            if not login_accounts:
-                # Fallback: try parsing final_result as JSON
-                raw_text = history.final_result()
-                if raw_text:
-                    try:
-                        parsed = json.loads(raw_text)
-                        if isinstance(parsed, dict):
-                            # Find the first list value in the dict
-                            list_val = next((v for v in parsed.values() if isinstance(v, list)), None)
-                            if list_val is not None:
-                                parsed = list_val
-                        if isinstance(parsed, list):
-                            login_accounts = parsed
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+                    # Fallback: try parsing final_result as JSON
+                    raw_text = history.final_result()
+                    if raw_text:
+                        try:
+                            parsed = json.loads(raw_text)
+                            if isinstance(parsed, dict):
+                                # Find the first list value in the dict
+                                list_val = next((v for v in parsed.values() if isinstance(v, list)), None)
+                                if list_val is not None:
+                                    parsed = list_val
+                            if isinstance(parsed, list):
+                                login_accounts = parsed
+                        except (json.JSONDecodeError, TypeError):
+                            pass
 
-            if not login_accounts:
-                if on_log:
-                    on_log(f"[{provider_key}] No accounts found for {label}")
-            else:
-                if on_log:
-                    on_log(f"[{provider_key}] Pass 1: found {len(login_accounts)} item(s)")
-
-                if active_wf.key != "financial_scraper":
-                    # Non-financial workflows: store raw results directly
-                    for item in login_accounts:
-                        item.setdefault("provider", provider_key)
-                        item.setdefault("login_id", login_id)
-                    all_accounts.extend(login_accounts)
+                if not login_accounts:
+                    if on_log:
+                        on_log(f"[{provider_key}] No accounts found for {label}")
                 else:
-                    # Financial scraper: merge/dedup accounts
-                    collected: dict[str, dict] = {}
-                    added, total = _merge_accounts(
-                        collected, login_accounts,
-                        provider_key=provider_key,
-                        label=label,
-                        login_id=login_id,
-                    )
-                    all_accounts.extend(collected.values())
+                    if on_log:
+                        on_log(f"[{provider_key}] Pass 1: found {len(login_accounts)} item(s)")
 
+                    if active_wf.key != "financial_scraper":
+                        # Non-financial workflows: store raw results directly
+                        for item in login_accounts:
+                            item.setdefault("provider", provider_key)
+                            item.setdefault("login_id", login_id)
+                        all_accounts.extend(login_accounts)
+                    else:
+                        # Financial scraper: merge/dedup accounts
+                        collected: dict[str, dict] = {}
+                        added, total = _merge_accounts(
+                            collected, login_accounts,
+                            provider_key=provider_key,
+                            label=label,
+                            login_id=login_id,
+                        )
+                        all_accounts.extend(collected.values())
+
+                    if on_log:
+                        on_log(f"[{provider_key}] Got {len(all_accounts)} item(s) from {label}")
+
+                # Mark login as authenticated
+                _update_auth_status(login_id, "authenticated")
+
+            except _HumanPauseSkipped:
+                _update_auth_status(login_id, "needs_2fa")
                 if on_log:
-                    on_log(f"[{provider_key}] Got {len(all_accounts)} item(s) from {label}")
+                    on_log(f"[{provider_key}] {label}: 2FA required — skipping (auto mode)")
 
-            # Mark login as authenticated
-            _update_auth_status(login_id, "authenticated")
+            except Exception as exc:
+                logger.exception("Agent failed for %s/%s", provider_key, label)
+                _update_auth_status(login_id, "login_failed")
+                metrics.errors.append(f"{label}: {exc}")
+                if on_log:
+                    on_log(f"[{provider_key}] Error for {label}: {exc}")
 
-        except _HumanPauseSkipped:
-            _update_auth_status(login_id, "needs_2fa")
+        # --- Pass 2: download statement PDFs and extract billing data ---
+        # Persist accounts first so statement matching can find them in the DB
+        if download_statements and all_accounts and accounts_db:
+            accounts_db.save_scrape_results(provider_key, all_accounts)
             if on_log:
-                on_log(f"[{provider_key}] {label}: 2FA required — skipping (auto mode)")
+                on_log(f"[{provider_key}] Pass 2: downloading statements...")
 
-        except Exception as exc:
-            logger.exception("Agent failed for %s/%s", provider_key, label)
-            _update_auth_status(login_id, "login_failed")
-            metrics.errors.append(f"{label}: {exc}")
-            if on_log:
-                on_log(f"[{provider_key}] Error for {label}: {exc}")
+            statement_results = await _download_statements(
+                browser_session=browser_session,
+                llm=llm,
+                accounts=all_accounts,
+                provider_key=provider_key,
+                provider_cfg=provider_cfg,
+                config=config,
+                download_dir=download_dir,
+                dashboard_url=provider_cfg.get("dashboard_url"),
+                start_url=provider_cfg.get("start_url"),
+                on_log=on_log,
+            )
 
-    # --- Pass 2: download statement PDFs and extract billing data ---
-    # Persist accounts first so statement matching can find them in the DB
-    if download_statements and all_accounts and accounts_db:
-        accounts_db.save_scrape_results(provider_key, all_accounts)
-        if on_log:
-            on_log(f"[{provider_key}] Pass 2: downloading statements...")
+            # Parse downloaded PDFs, match to DB accounts, persist statements
+            if statement_results:
+                from .pdf_utils import extract_statement_data, extract_pdf_text
+                from .llm import llm_chat
 
-        statement_results = await _download_statements(
-            browser_session=browser_session,
-            llm=llm,
-            accounts=all_accounts,
-            provider_key=provider_key,
-            provider_cfg=provider_cfg,
-            config=config,
-            download_dir=download_dir,
-            dashboard_url=provider_cfg.get("dashboard_url"),
-            start_url=provider_cfg.get("start_url"),
-            on_log=on_log,
-        )
-
-        # Parse downloaded PDFs, match to DB accounts, persist statements
-        if statement_results:
-            from .pdf_utils import extract_statement_data, extract_pdf_text
-            from .llm import llm_chat
-
-            for dl in statement_results:
-                try:
-                    # Match PDF to scraped account by mask or card name in text
-                    pdf_text = extract_pdf_text(dl["file_path"])
-                    matched_acct = None
-                    for acct in all_accounts:
-                        mask = acct.get("account_mask", "")
-                        if mask and mask in pdf_text:
-                            matched_acct = acct
-                            break
-                    if not matched_acct:
+                for dl in statement_results:
+                    try:
+                        # Match PDF to scraped account by mask or card name in text
+                        pdf_text = extract_pdf_text(dl["file_path"])
+                        matched_acct = None
                         for acct in all_accounts:
-                            card = acct.get("card_name", "")
-                            if card and card.lower() in pdf_text.lower():
+                            mask = acct.get("account_mask", "")
+                            if mask and mask in pdf_text:
                                 matched_acct = acct
                                 break
+                        if not matched_acct:
+                            for acct in all_accounts:
+                                card = acct.get("card_name", "")
+                                if card and card.lower() in pdf_text.lower():
+                                    matched_acct = acct
+                                    break
 
-                    stmt_data = await extract_statement_data(dl["file_path"], llm_chat)
-                    if stmt_data:
-                        dl["statement_data"] = stmt_data
-                        if matched_acct:
-                            dl["card_name"] = matched_acct.get("card_name", dl["card_name"])
-                            dl["account_mask"] = matched_acct.get("account_mask")
-                            # Enrich the scraped account dict with PDF-extracted fields
-                            for field in ("due_date", "minimum_payment", "statement_balance",
-                                          "last_payment_amount", "last_payment_date",
-                                          "credit_limit"):
-                                pdf_val = stmt_data.get(field)
-                                if pdf_val is not None:
-                                    matched_acct[field] = pdf_val
-                            for field in ("intro_apr_rate", "intro_apr_end_date", "regular_apr"):
-                                pdf_val = stmt_data.get(field)
-                                if pdf_val is not None:
-                                    matched_acct[field] = pdf_val
+                        stmt_data = await extract_statement_data(dl["file_path"], llm_chat)
+                        if stmt_data:
+                            dl["statement_data"] = stmt_data
+                            if matched_acct:
+                                dl["card_name"] = matched_acct.get("card_name", dl["card_name"])
+                                dl["account_mask"] = matched_acct.get("account_mask")
+                                # Enrich the scraped account dict with PDF-extracted fields
+                                for field in ("due_date", "minimum_payment", "statement_balance",
+                                              "last_payment_amount", "last_payment_date",
+                                              "credit_limit"):
+                                    pdf_val = stmt_data.get(field)
+                                    if pdf_val is not None:
+                                        matched_acct[field] = pdf_val
+                                for field in ("intro_apr_rate", "intro_apr_end_date", "regular_apr"):
+                                    pdf_val = stmt_data.get(field)
+                                    if pdf_val is not None:
+                                        matched_acct[field] = pdf_val
 
-                            # Persist to AccountStatement table via accounts_db
-                            if accounts_db:
-                                _persist_statement(
-                                    accounts_db, provider_key, matched_acct, dl, stmt_data, on_log,
-                                )
+                                # Persist to AccountStatement table via accounts_db
+                                if accounts_db:
+                                    _persist_statement(
+                                        accounts_db, provider_key, matched_acct, dl, stmt_data, on_log,
+                                    )
 
-                            if on_log:
-                                filled = [f for f in stmt_data if stmt_data[f] is not None]
-                                on_log(f"[{provider_key}] PDF enriched {matched_acct.get('card_name')}: {', '.join(filled)}")
-                        else:
-                            if on_log:
-                                on_log(f"[{provider_key}] PDF {dl['file_path']} — no account match found")
-                except Exception as exc:
-                    logger.exception("Statement parsing failed for %s", dl["file_path"])
-                    if on_log:
-                        on_log(f"[{provider_key}] PDF parse error: {exc}")
+                                if on_log:
+                                    filled = [f for f in stmt_data if stmt_data[f] is not None]
+                                    on_log(f"[{provider_key}] PDF enriched {matched_acct.get('card_name')}: {', '.join(filled)}")
+                            else:
+                                if on_log:
+                                    on_log(f"[{provider_key}] PDF {dl['file_path']} — no account match found")
+                    except Exception as exc:
+                        logger.exception("Statement parsing failed for %s", dl["file_path"])
+                        if on_log:
+                            on_log(f"[{provider_key}] PDF parse error: {exc}")
 
+            if on_log:
+                on_log(f"[{provider_key}] Downloaded {len(statement_results)} statement(s)")
+
+    # Run with timeout
+    start_time = time.monotonic()
+    try:
+        await asyncio.wait_for(_run_scrape_with_timeout(), timeout=provider_timeout)
+        metrics.elapsed_seconds = time.monotonic() - start_time
+    except asyncio.TimeoutError:
+        elapsed = time.monotonic() - start_time
+        metrics.elapsed_seconds = elapsed
+        metrics.timed_out = True
+        metrics.errors.append(f"Provider timeout after {elapsed:.1f}s (limit: {provider_timeout}s)")
         if on_log:
-            on_log(f"[{provider_key}] Downloaded {len(statement_results)} statement(s)")
-
-    await browser_session.kill()
+            on_log(f"[{provider_key}] TIMEOUT: exceeded {provider_timeout}s limit after {elapsed:.1f}s")
+        logger.warning("%s timed out after %.1fs (limit: %ds)", provider_key, elapsed, provider_timeout)
+    finally:
+        # Always kill the browser session
+        await browser_session.kill()
 
     metrics.accounts_found = len(all_accounts)
     if on_log:

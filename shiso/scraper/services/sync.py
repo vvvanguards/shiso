@@ -16,7 +16,7 @@ from ..models.accounts import ScraperLogin, ScraperLoginSyncRun
 from ..services.accounts_db import AccountsDB
 from ..agent.analyst import analyze_run
 from ..agent.llm import llm_chat
-from ..agent.scraper import scrape_provider
+from ..agent.scraper import scrape_provider, ProviderTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ class SyncRun:
         self.persisted: list[Any] = []
         self.metrics: dict[str, Any] = {}
         self.error: str | None = None
+        self.timed_out: bool = False
 
     def on_log(self, msg: str) -> None:
         self.logs.append(msg)
@@ -76,7 +77,12 @@ def finalize_sync_run(sync: SyncRun) -> None:
         db_run = session.get(ScraperLoginSyncRun, sync.run_id)
         login = session.get(ScraperLogin, sync.login_id)
 
-        if sync.error:
+        if sync.timed_out:
+            db_run.status = "timeout"
+            db_run.error = sync.error or "Provider timeout"
+            login.last_sync_status = "timeout"
+            login.last_sync_error = sync.error
+        elif sync.error:
             db_run.status = "failed"
             db_run.error = sync.error
             login.last_sync_status = "failed"
@@ -141,6 +147,11 @@ async def run_sync(
         results = scrape_result.accounts
         sync.results = results
         sync.metrics = scrape_result.metrics.to_dict()
+
+        # Handle timeout status
+        if scrape_result.metrics.timed_out:
+            sync.timed_out = True
+            sync.error = scrape_result.metrics.errors[-1] if scrape_result.metrics.errors else "Provider timeout"
 
         # Route persistence: non-financial workflows → ToolRunOutput; financial → AccountsDB
         if workflow and workflow.key != "financial_scraper":

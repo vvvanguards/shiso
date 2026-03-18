@@ -64,6 +64,8 @@ def _import_models() -> None:
         FinancialAccountLogin,
         FinancialAccountType,
         PromoAprPeriod,
+        RewardsProgram,
+        RewardsBalance,
         ScraperLogin,
         ScraperLoginSyncRun,
     )
