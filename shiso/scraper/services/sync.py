@@ -69,7 +69,14 @@ def create_sync_run(login_id: int) -> SyncRun:
 
 
 def finalize_sync_run(sync: SyncRun) -> None:
-    """Update the ScraperLoginSyncRun and ScraperLogin with final results."""
+    """Update the ScraperLoginSyncRun and ScraperLogin with final results.
+    
+    Status values:
+    - "running": in progress
+    - "succeeded": completed without errors
+    - "failed": error during execution
+    - "timeout": exceeded provider_timeout limit (may have partial results)
+    """
     finished_at = datetime.utcnow()
     metrics = sync.metrics
 
@@ -82,6 +89,9 @@ def finalize_sync_run(sync: SyncRun) -> None:
             db_run.error = sync.error or "Provider timeout"
             login.last_sync_status = "timeout"
             login.last_sync_error = sync.error
+            # Record partial results for timeout
+            db_run.accounts_found = len(sync.results)
+            db_run.snapshots_saved = len(sync.persisted)
         elif sync.error:
             db_run.status = "failed"
             db_run.error = sync.error
