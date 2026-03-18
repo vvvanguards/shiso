@@ -677,6 +677,99 @@ def list_tool_runs(tool_key: str, limit: int = 20):
 
 
 # ---------------------------------------------------------------------------
+# Interactive Auth
+# ---------------------------------------------------------------------------
+
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+# Track running interactive auth sessions (thread-safe)
+_interactive_auth_sessions: dict[int, subprocess.Popen] = {}
+_interactive_auth_lock = threading.Lock()
+
+
+def _cleanup_old_process(login_id: int) -> None:
+    """Clean up a finished process from memory."""
+    if login_id in _interactive_auth_sessions:
+        proc = _interactive_auth_sessions[login_id]
+        if proc.poll() is not None:
+            del _interactive_auth_sessions[login_id]
+
+
+@app.get("/api/logins/problems")
+def get_problem_logins():
+    """Get logins that need attention (needs_2fa or login_failed)."""
+    with scraper.SessionLocal() as session:
+        logins = (
+            session.query(scraper.ScraperLogin)
+            .filter(scraper.ScraperLogin.last_auth_status.in_(["needs_2fa", "login_failed"]))
+            .order_by(scraper.ScraperLogin.provider_key)
+            .all()
+        )
+        return [_login_to_response(l) for l in logins]
+
+
+@app.post("/api/logins/{login_id}/interactive")
+def start_interactive_auth(login_id: int):
+    """Start an interactive auth session for a login that needs 2FA or failed.
+
+    This spawns a browser-use agent to attempt login with human assistance for 2FA.
+    Returns immediately with a status; poll GET /api/logins/{login_id}/interactive for updates.
+    """
+    with scraper.SessionLocal() as session:
+        login = session.get(scraper.ScraperLogin, login_id)
+        if not login:
+            raise HTTPException(status_code=404, detail="Login not found")
+        if not login.enabled:
+            raise HTTPException(status_code=400, detail="Login is disabled")
+
+        provider_key = login.provider_key
+
+    with _interactive_auth_lock:
+        # Clean up any finished process for this login
+        _cleanup_old_process(login_id)
+
+        # Check if already running
+        if login_id in _interactive_auth_sessions:
+            return {"status": "running", "message": f"Interactive auth already in progress for {provider_key}"}
+
+        # Run the auth CLI as a subprocess (inherit stdout/stderr to avoid pipe deadlock)
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "shiso.scraper.agent.auth", "login", provider_key],
+                cwd=str(Path(__file__).parent.parent.parent),
+            )
+            _interactive_auth_sessions[login_id] = proc
+            return {"status": "started", "message": f"Interactive auth started for {provider_key}. Check browser window for login prompts."}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to start interactive auth: {str(e)}")
+
+
+@app.get("/api/logins/{login_id}/interactive")
+def get_interactive_auth_status(login_id: int):
+    """Check if an interactive auth session is still running."""
+    with _interactive_auth_lock:
+        if login_id not in _interactive_auth_sessions:
+            return {"status": "idle", "message": "No interactive auth session running"}
+
+        proc = _interactive_auth_sessions[login_id]
+        poll_result = proc.poll()
+
+        if poll_result is None:
+            return {"status": "running", "message": "Interactive auth in progress. Check browser window."}
+
+        # Process finished - clean up
+        del _interactive_auth_sessions[login_id]
+
+        if poll_result == 0:
+            return {"status": "completed", "message": "Interactive auth completed successfully. Refresh to see updated status."}
+        else:
+            return {"status": "failed", "message": f"Interactive auth exited with code {poll_result}"}
+
+
+# ---------------------------------------------------------------------------
 # Rewards Programs
 # ---------------------------------------------------------------------------
 

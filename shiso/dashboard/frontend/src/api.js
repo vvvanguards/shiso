@@ -178,6 +178,23 @@ export async function importLogins(file, selectedRowIds, overwriteRowIds = []) {
   return response.json()
 }
 
+export async function fetchProblemLogins() {
+  const response = await fetch(`${API_BASE}/logins/problems`)
+  if (!response.ok) throw new Error('Failed to fetch problem logins')
+  return response.json()
+}
+
+export async function startInteractiveAuth(loginId) {
+  const response = await fetch(`${API_BASE}/logins/${loginId}/interactive`, {
+    method: 'POST',
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to start interactive auth')
+  }
+  return response.json()
+}
+
 export async function fetchRewardsPrograms() {
   const response = await fetch(`${API_BASE}/rewards`)
   if (!response.ok) throw new Error('Failed to fetch rewards programs')

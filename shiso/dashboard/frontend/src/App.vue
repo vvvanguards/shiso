@@ -44,6 +44,38 @@
         </Card>
       </div>
 
+      <!-- Problem Logins Alert -->
+      <div v-if="problemLoginsDerived.length > 0" class="bg-red-950/50 border border-red-800 rounded-lg p-4">
+        <div class="flex items-start gap-3">
+          <i class="pi pi-exclamation-triangle text-red-400 text-xl mt-0.5" />
+          <div class="flex-1">
+            <h3 class="text-lg font-semibold text-red-300 mb-2">Attention Required</h3>
+            <p class="text-sm text-red-200 mb-3">
+              {{ problemLoginsDerived.length }} login(s) need authentication. Interactive login required to sync these accounts.
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <div v-for="login in problemLoginsDerived" :key="login.id" class="flex items-center gap-2 bg-surface-900 rounded px-3 py-2">
+                <Tag 
+                  :value="login.last_auth_status === 'needs_2fa' ? '2FA Required' : 'Login Failed'" 
+                  :severity="login.last_auth_status === 'needs_2fa' ? 'warn' : 'danger'" 
+                />
+                <span class="font-medium">{{ login.institution || login.provider_key }}</span>
+                <span class="text-xs text-surface-400">{{ login.username || login.label }}</span>
+                <Button 
+                  @click="startInteractiveAuthForLogin(login)" 
+                  :loading="interactiveAuthLoading[login.id]"
+                  :disabled="interactiveAuthLoading[login.id]"
+                  label="Retry Interactive" 
+                  icon="pi pi-sign-in" 
+                  severity="success" 
+                  size="small"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Global search -->
       <div class="flex justify-end">
         <IconField>
@@ -486,7 +518,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, reactive } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import { useConfirm } from 'primevue/useconfirm'
 import { FilterMatchMode } from '@primevue/core/api'
@@ -509,6 +541,8 @@ import {
   fetchAccountTypes,
   fetchTools,
   fetchToolRuns,
+  fetchProblemLogins,
+  startInteractiveAuth,
   fetchRewardsPrograms,
   createRewardsProgram,
   updateRewardsProgram,
@@ -560,6 +594,16 @@ const loginDialogEdit = ref(false)
 const loginEditId = ref(null)
 const loginForm = ref(defaultLoginForm())
 const accountTypes = ref([])
+
+// Problem logins (needs_2fa, login_failed)
+const problemLogins = ref([])
+const interactiveAuthLoading = reactive({})
+
+// Computed: derive from logins if not fetched separately
+const problemLoginsDerived = computed(() => {
+  if (problemLogins.value.length > 0) return problemLogins.value
+  return logins.value.filter(l => l.last_auth_status === 'needs_2fa' || l.last_auth_status === 'login_failed')
+})
 
 const promos = ref([])
 const accountsList = ref([])
@@ -699,6 +743,11 @@ async function loadAll() {
 async function loadLogins() {
   try {
     logins.value = await fetchLogins()
+    try {
+      problemLogins.value = await fetchProblemLogins()
+    } catch {
+      problemLogins.value = []
+    }
   } catch (err) { toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 }) }
 }
 
@@ -723,6 +772,21 @@ async function syncEnabledLogins() {
     toast.add({ severity: 'error', summary: 'Sync Failed', detail: err.message, life: 5000 })
   } finally {
     syncingAllLogins.value = false
+  }
+}
+
+async function startInteractiveAuthForLogin(login) {
+  interactiveAuthLoading[login.id] = true
+  try {
+    const result = await startInteractiveAuth(login.id)
+    toast.add({ severity: 'info', summary: 'Interactive Auth Started', detail: result.message, life: 5000 })
+    setTimeout(async () => {
+      await loadLogins()
+    }, 3000)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Failed to Start', detail: err.message, life: 5000 })
+  } finally {
+    interactiveAuthLoading[login.id] = false
   }
 }
 
