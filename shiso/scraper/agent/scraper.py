@@ -992,36 +992,57 @@ async def scrape_provider(
                                     matched_acct = acct
                                     break
 
-                        stmt_data = await extract_statement_data(dl["file_path"], llm_chat)
-                        if stmt_data:
-                            dl["statement_data"] = stmt_data
-                            if matched_acct:
-                                dl["card_name"] = matched_acct.get("card_name", dl["card_name"])
-                                dl["account_mask"] = matched_acct.get("account_mask")
-                                # Enrich the scraped account dict with PDF-extracted fields
-                                for field in ("due_date", "minimum_payment", "statement_balance",
-                                              "last_payment_amount", "last_payment_date",
-                                              "credit_limit"):
-                                    pdf_val = stmt_data.get(field)
-                                    if pdf_val is not None:
-                                        matched_acct[field] = pdf_val
-                                for field in ("intro_apr_rate", "intro_apr_end_date", "regular_apr"):
-                                    pdf_val = stmt_data.get(field)
-                                    if pdf_val is not None:
-                                        matched_acct[field] = pdf_val
+stmt_data = await extract_statement_data(dl["file_path"], llm_chat)
+                            if stmt_data:
+                                dl["statement_data"] = stmt_data
+                                if matched_acct:
+                                    dl["card_name"] = matched_acct.get("card_name", dl["card_name"])
+                                    dl["account_mask"] = matched_acct.get("account_mask")
+                                    # Enrich the scraped account dict with PDF-extracted fields
+                                    for field in ("due_date", "minimum_payment", "statement_balance",
+                                                  "last_payment_amount", "last_payment_date",
+                                                  "credit_limit"):
+                                        pdf_val = stmt_data.get(field)
+                                        if pdf_val is not None:
+                                            matched_acct[field] = pdf_val
+                                    for field in ("intro_apr_rate", "intro_apr_end_date", "regular_apr"):
+                                        pdf_val = stmt_data.get(field)
+                                        if pdf_val is not None:
+                                            matched_acct[field] = pdf_val
 
-                                # Persist to AccountStatement table via accounts_db
-                                if accounts_db:
-                                    _persist_statement(
-                                        accounts_db, provider_key, matched_acct, dl, stmt_data, on_log,
-                                    )
+                                    # Rename PDF to include card name if not already named
+                                    original_path = Path(dl["file_path"])
+                                    card_name = matched_acct.get("card_name", "unknown")
+                                    mask = matched_acct.get("account_mask", "")
+                                    product_slug = re.sub(r"[^\w]+", "_", card_name).strip("_").lower()[:30]
+                                    # Build new name: {card_slug}_{mask}_{original_stem}.pdf
+                                    parts = [product_slug]
+                                    if mask:
+                                        parts.append(mask)
+                                    parts.append(original_path.stem)
+                                    new_name = "_".join(parts) + ".pdf"
+                                    new_path = original_path.parent / new_name
+                                    if new_path != original_path and not new_path.exists():
+                                        try:
+                                            original_path.rename(new_path)
+                                            dl["file_path"] = str(new_path)
+                                            if on_log:
+                                                on_log(f"[{provider_key}] Renamed PDF: {original_path.name} → {new_path.name}")
+                                        except Exception:
+                                            pass  # Keep original name if rename fails
 
-                                if on_log:
-                                    filled = [f for f in stmt_data if stmt_data[f] is not None]
-                                    on_log(f"[{provider_key}] PDF enriched {matched_acct.get('card_name')}: {', '.join(filled)}")
-                            else:
-                                if on_log:
-                                    on_log(f"[{provider_key}] PDF {dl['file_path']} — no account match found")
+                                    # Persist to AccountStatement table via accounts_db
+                                    if accounts_db:
+                                        _persist_statement(
+                                            accounts_db, provider_key, matched_acct, dl, stmt_data, on_log,
+                                        )
+
+                                    if on_log:
+                                        filled = [f for f in stmt_data if stmt_data[f] is not None]
+                                        on_log(f"[{provider_key}] PDF enriched {matched_acct.get('card_name')}: {', '.join(filled)}")
+                                else:
+                                    if on_log:
+                                        on_log(f"[{provider_key}] PDF {dl['file_path']} — no account match found")
                     except Exception as exc:
                         logger.exception("Statement parsing failed for %s", dl["file_path"])
                         if on_log:
