@@ -64,6 +64,10 @@ class AccountOutput(BaseModel):
     last_payment_date: str | None = None
     credit_limit: float | None = None
     interest_rate: float | None = None
+    intro_apr_rate: float | None = None
+    intro_apr_end_date: str | None = None
+    regular_apr: float | None = None
+    promo_type: str | None = None
     account_type: str | None = None
     address: str | None = None
 
@@ -123,6 +127,10 @@ For each account, extract whatever is visible on the overview page:
 - last_payment_date: Date of most recent payment in YYYY-MM-DD format, or null
 - credit_limit: Credit limit or credit line amount, or null
 - interest_rate: Current APR/interest rate as a percentage number (e.g. 29.99), or null
+- intro_apr_rate: Promotional/introductory APR rate (e.g. 0.0 for 0% intro), or null
+- intro_apr_end_date: End date of promotional APR period in YYYY-MM-DD format, or null
+- regular_apr: Standard APR that applies after promo ends (e.g. 29.99), or null
+- promo_type: Type of promo - "purchase", "balance_transfer", or "general", or null
 - account_type: e.g. credit_card, bank_account, utility, loan
 - address: Service/billing address if shown
 
