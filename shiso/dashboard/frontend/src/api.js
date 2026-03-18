@@ -218,3 +218,9 @@ export async function deleteRewardsProgram(id) {
   }
   return response.json()
 }
+
+export async function fetchRewardsSummary() {
+  const response = await fetch(`${API_BASE}/rewards/summary`)
+  if (!response.ok) throw new Error('Failed to fetch rewards summary')
+  return response.json()
+}

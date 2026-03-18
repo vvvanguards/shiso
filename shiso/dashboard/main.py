@@ -791,6 +791,12 @@ def delete_rewards_program(program_id: int):
         return {"ok": True}
 
 
+@app.get("/api/rewards/summary")
+def get_rewards_summary():
+    """Get summary of all rewards programs with latest balances."""
+    return db.get_rewards_summary()
+
+
 scraper.init_db()
 
 if __name__ == "__main__":
