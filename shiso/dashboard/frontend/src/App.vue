@@ -406,6 +406,38 @@
         <Button @click="saveLogin" :label="loginDialogEdit ? 'Update' : 'Create'" severity="success" />
       </template>
     </Dialog>
+
+    <!-- Rewards Dialog -->
+    <Dialog v-model:visible="rewardsDialogVisible" :header="rewardsDialogEdit ? 'Edit Rewards Program' : 'Add Rewards Program'" modal :style="{ width: '480px' }">
+      <div class="flex flex-col gap-4 pt-2">
+        <div class="flex flex-col gap-1">
+          <label class="text-sm font-medium">Account</label>
+          <Select v-model="rewardsForm.financial_account_id" :options="accountsList" optionLabel="label" optionValue="id" placeholder="Select account" fluid />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm font-medium">Program Name</label>
+          <InputText v-model="rewardsForm.program_name" placeholder="e.g. Chase Ultimate Rewards" fluid />
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium">Type</label>
+            <Select v-model="rewardsForm.program_type" :options="rewardsTypes" optionLabel="label" optionValue="value" fluid />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium">Unit Name</label>
+            <InputText v-model="rewardsForm.unit_name" placeholder="points, miles, etc." fluid />
+          </div>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm font-medium">Cents per Unit (forvaluation)</label>
+          <InputText v-model="rewardsForm.cents_per_unit" type="number" step="0.01" placeholder="e.g. 1.5for 1.5¢/point" fluid />
+        </div>
+      </div>
+      <template #footer>
+        <Button @click="rewardsDialogVisible = false" label="Cancel" severity="secondary" text />
+        <Button @click="saveRewardsProgram" :label="rewardsDialogEdit ? 'Update' : 'Create'" severity="success" />
+      </template>
+    </Dialog>
   </div>
 </template>
 
