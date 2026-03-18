@@ -26,6 +26,8 @@ dependencies = [
     "python-multipart>=0.0.9",
     "tomli-w>=1.2.0",
     "python-dotenv>=1.1.0",
+    # Dev reload
+    "watchfiles>=0.20.0",
 ]
 
 [project.scripts]

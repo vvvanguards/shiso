@@ -162,9 +162,36 @@ async def run_worker() -> None:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Sync worker for processing queued runs")
+    parser.add_argument("--reload", action="store_true", help="Restart on code changes (dev mode)")
+    args = parser.parse_args()
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
         datefmt="%H:%M:%S",
     )
-    asyncio.run(run_worker())
+
+    if args.reload:
+        try:
+            from watchfiles import watch
+        except ImportError:
+            logger.error("--reload requires watchfiles: pip install watchfiles")
+            raise SystemExit(1)
+
+        import os
+        import subprocess
+        import sys
+
+        watch_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        logger.info("Watching %s for changes...", watch_dir)
+        logger.info("Worker running in reload mode — will restart on file changes")
+
+        for changes in watch(watch_dir):
+            logger.info("Code changed, restarting worker...")
+            # Re-run this script with same args (minus --reload)
+            subprocess.run([sys.executable, "-m", "shiso.scraper.worker"])
+    else:
+        asyncio.run(run_worker())

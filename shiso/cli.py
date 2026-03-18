@@ -139,13 +139,13 @@ def start() -> None:
             [sys.executable, "-m", "shiso.dashboard.main"],
             cwd=str(Path(__file__).parent.parent),
         ))
-        console.print("  [green]API[/green] started")
+        console.print("  [green]API[/green] started (with reload)")
 
         procs.append(subprocess.Popen(
-            [sys.executable, "-m", "shiso.scraper.worker"],
+            [sys.executable, "-m", "shiso.scraper.worker", "--reload"],
             cwd=str(Path(__file__).parent.parent),
         ))
-        console.print("  [green]Worker[/green] started")
+        console.print("  [green]Worker[/green] started (with reload)")
 
         frontend_dir = Path(__file__).parent / "dashboard" / "frontend"
         if (frontend_dir / "package.json").exists():
