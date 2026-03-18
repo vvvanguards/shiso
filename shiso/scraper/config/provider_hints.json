@@ -39,5 +39,47 @@
       "Account data extraction fails when login cannot complete - prioritize auth success"
     ],
     "updated_at": "2026-03-14T22:56:57.398769"
+  },
+  "fidelity": {
+    "failed_actions": [
+      "pause_for_human failed repeatedly with 2FA/verification required",
+      "Model output validation failed - missing required 'done' field in response",
+      "Scraper unable to bypass Fidelity's 2FA authentication flow"
+    ],
+    "effective_patterns": [
+      "Login page navigation works initially before 2FA wall",
+      "Click/wait actions function properly until verification step",
+      "Fidelity login page is accessible at start_url"
+    ],
+    "navigation_tips": [
+      "Fidelity requires manual 2FA verification that cannot be automated",
+      "Consider using Fidelity API endpoints instead of web scraping",
+      "Account data may require authenticated API access rather than browser automation",
+      "Fidelity actively blocks automated login attempts with 2FA challenges",
+      "No public API exists for account data without prior authentication",
+      "Web scraping Fidelity login pages is not viable for account discovery",
+      "Consider alternative data sources or Fidelity's official data feeds"
+    ],
+    "updated_at": "2026-03-18T03:10:03.006426"
+  },
+  "bofa": {
+    "failed_actions": [
+      "Clicking button index=231 failed due to stale element - get fresh browser state before retrying",
+      "Model output format validation errors prevented proper action execution across all action types",
+      "Multiple consecutive click attempts failed due to schema mismatch in model outputs"
+    ],
+    "effective_patterns": [
+      "Starting from Bank of America signin page is correct for authentication flow",
+      "Button indices become stale after navigation - always get fresh browser state",
+      "Action outputs must include proper schema fields (e.g., ClickActionModel.click, not DoneActionModel.done)"
+    ],
+    "navigation_tips": [
+      "Get fresh browser state before retrying clicks after any navigation/interaction",
+      "Ensure model outputs match expected action schema with required fields for each action type",
+      "Bank of America requires successful authentication before accessing account data",
+      "Avoid using stale button indices - use find_elements or fresh state detection",
+      "If login fails, verify credentials and session state before retrying"
+    ],
+    "updated_at": "2026-03-18T03:13:49.497271"
   }
 }

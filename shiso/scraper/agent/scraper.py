@@ -426,6 +426,19 @@ def _build_tools(*, interactive: bool = False) -> Any:
     return tools
 
 
+_LOGIN_FAILURE_PATTERNS = [
+    "wrong user id or password",
+    "wrong username or password",
+    "incorrect password",
+    "invalid credentials",
+    "login failed",
+    "unable to log in",
+    "unable to sign in",
+    "account locked",
+    "account disabled",
+]
+
+
 async def _on_step(agent: Agent, on_log: Callable[[str], None] | None) -> None:
     """Called after each Agent step. Emits log lines for analyst."""
     step_num = agent.state.n_steps if hasattr(agent, "state") else 0
@@ -439,6 +452,17 @@ async def _on_step(agent: Agent, on_log: Callable[[str], None] | None) -> None:
     errors = agent.history.errors() if agent.history else []
     if errors and errors[-1] and on_log:
         on_log(f"Step {step_num}: failed — {errors[-1]}")
+
+    # Check agent memory for login failure — abort early instead of retrying
+    if hasattr(agent, "state") and hasattr(agent.state, "memory"):
+        memory = (agent.state.memory or "").lower()
+        for pattern in _LOGIN_FAILURE_PATTERNS:
+            if pattern in memory:
+                if on_log:
+                    on_log(f"Step {step_num}: login failure detected — aborting")
+                agent._login_failed = True  # checked after run() returns
+                agent.stop()
+                return
 
 
 # ---------------------------------------------------------------------------
@@ -836,6 +860,14 @@ async def scrape_provider(
             metrics.steps_taken += agent.state.n_steps if hasattr(agent, "state") else 0
             errors = history.errors() if history else []
             metrics.failed_actions += sum(1 for e in errors if e)
+
+            # Early exit if login failure was detected in step callback
+            if getattr(agent, "_login_failed", False):
+                _update_auth_status(login_id, "login_failed")
+                metrics.errors.append(f"{label}: login failed — bad credentials")
+                if on_log:
+                    on_log(f"[{provider_key}] {label}: login failed — check credentials")
+                continue
 
             # --- Pass 1: extract accounts from overview ---
             result = history.get_structured_output(output_schema)
