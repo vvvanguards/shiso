@@ -177,3 +177,50 @@ export async function importLogins(file, selectedRowIds, overwriteRowIds = []) {
   }
   return response.json()
 }
+
+export async function fetchRewardsPrograms() {
+  const response = await fetch(`${API_BASE}/rewards`)
+  if (!response.ok) throw new Error('Failed to fetch rewards programs')
+  return response.json()
+}
+
+export async function createRewardsProgram(data) {
+  const response = await fetch(`${API_BASE}/rewards`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to create rewards program')
+  }
+  return response.json()
+}
+
+export async function updateRewardsProgram(id, data) {
+  const response = await fetch(`${API_BASE}/rewards/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to update rewards program')
+  }
+  return response.json()
+}
+
+export async function deleteRewardsProgram(id) {
+  const response = await fetch(`${API_BASE}/rewards/${id}`, { method: 'DELETE' })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to delete rewards program')
+  }
+  return response.json()
+}
+
+export async function fetchRewardsSummary() {
+  const response = await fetch(`${API_BASE}/rewards/summary`)
+  if (!response.ok) throw new Error('Failed to fetch rewards summary')
+  return response.json()
+}
