@@ -112,11 +112,6 @@ from ..tools.workflows import Workflow
 from dataclasses import dataclass, field
 
 
-class ProviderTimeoutError(Exception):
-    """Raised when a provider scrape exceeds its wall-clock timeout."""
-    pass
-
-
 @dataclass
 class ScrapeMetrics:
     """Structured metrics from a scraper run — no log parsing needed."""

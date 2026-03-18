@@ -16,7 +16,7 @@ from ..models.accounts import ScraperLogin, ScraperLoginSyncRun
 from ..services.accounts_db import AccountsDB
 from ..agent.analyst import analyze_run
 from ..agent.llm import llm_chat
-from ..agent.scraper import scrape_provider, ProviderTimeoutError
+from ..agent.scraper import scrape_provider
 
 logger = logging.getLogger(__name__)
 
