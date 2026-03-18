@@ -8,7 +8,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from .analyst import analyze_run, extract_run_metrics, load_provider_hints
+from .analyst import analyze_run, load_provider_hints
 from .llm import llm_chat
 from .run import run_scrapers
 
@@ -71,42 +71,18 @@ async def smart_tune(
             hint_count = sum(len(v) for v in hints.values() if isinstance(v, list))
             print(f"  Active hints: {hint_count}")
 
-        collected_logs = []
-
         try:
             payload = await run_scrapers(
                 targets=[provider_key],
-                on_log=lambda msg: collected_logs.append(msg),
             )
-            metrics = extract_run_metrics(collected_logs)
+            metrics = payload.get("metrics", {}).get(provider_key, {})
 
             record = {"run": i, **metrics}
 
-            print(f"\n  Run {i}: {metrics['accounts_found']} accounts "
-                  f"({metrics['accounts_complete']} complete), "
-                  f"{metrics['steps_taken']} steps")
-            print(f"  Crises: {metrics['crises_hit']}, Failures: {metrics['failed_actions']}")
+            print(f"\n  Run {i}: {metrics.get('accounts_found', 0)} accounts, "
+                  f"{metrics.get('steps_taken', 0)} steps, "
+                  f"{metrics.get('failed_actions', 0)} failures")
 
-            # Run analyst to improve hints for the next iteration
-            print(f"\n  Running analyst on run {i} logs...")
-            new_hints = await analyze_run(
-                provider_key,
-                collected_logs,
-                llm_chat_fn,
-                previous_metrics=previous_metrics,
-            )
-            if new_hints:
-                note_parts = []
-                if new_hints.get("failed_actions"):
-                    note_parts.append(f"{len(new_hints['failed_actions'])} failures noted")
-                if new_hints.get("navigation_tips"):
-                    note_parts.append(f"{len(new_hints['navigation_tips'])} tips added")
-                record["analyst_note"] = "; ".join(note_parts) if note_parts else "hints updated"
-                print(f"  Analyst: {record['analyst_note']}")
-            else:
-                print(f"  Analyst: no issues found")
-
-            previous_metrics = metrics
             run_history.append(record)
 
         except Exception as e:

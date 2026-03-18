@@ -112,6 +112,30 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class ScrapeMetrics:
+    """Structured metrics from a scraper run — no log parsing needed."""
+    accounts_found: int = 0
+    steps_taken: int = 0
+    failed_actions: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "accounts_found": self.accounts_found,
+            "steps_taken": self.steps_taken,
+            "failed_actions": self.failed_actions,
+            "errors": self.errors,
+        }
+
+
+@dataclass
+class ScrapeResult:
+    """Return value from scrape_provider."""
+    accounts: list[dict[str, Any]] = field(default_factory=list)
+    metrics: ScrapeMetrics = field(default_factory=ScrapeMetrics)
+
+
+@dataclass
 class ScrapeContext:
     """Run-scoped configuration carried through all scraper functions."""
     provider_key: str
@@ -758,6 +782,7 @@ async def scrape_provider(
 
     llm = _build_llm(config, agent_cfg=agent_cfg)
     all_accounts: list[dict[str, Any]] = []
+    metrics = ScrapeMetrics()
 
     for login in logins:
         login_id = login.get("id")
@@ -806,6 +831,11 @@ async def scrape_provider(
             history = await agent.run(
                 on_step_end=lambda a: _on_step(a, on_log),
             )
+
+            # Collect metrics from agent history
+            metrics.steps_taken += agent.state.n_steps if hasattr(agent, "state") else 0
+            errors = history.errors() if history else []
+            metrics.failed_actions += sum(1 for e in errors if e)
 
             # --- Pass 1: extract accounts from overview ---
             result = history.get_structured_output(output_schema)
@@ -871,6 +901,7 @@ async def scrape_provider(
         except Exception as exc:
             logger.exception("Agent failed for %s/%s", provider_key, label)
             _update_auth_status(login_id, "login_failed")
+            metrics.errors.append(f"{label}: {exc}")
             if on_log:
                 on_log(f"[{provider_key}] Error for {label}: {exc}")
 
@@ -956,7 +987,8 @@ async def scrape_provider(
 
     await browser_session.kill()
 
+    metrics.accounts_found = len(all_accounts)
     if on_log:
         on_log(f"[{provider_key}] {len(all_accounts)} account(s) across {len(logins)} login(s)")
 
-    return all_accounts
+    return ScrapeResult(accounts=all_accounts, metrics=metrics)

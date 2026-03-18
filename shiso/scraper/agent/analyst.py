@@ -90,7 +90,7 @@ def extract_run_metrics(log_lines: list[str]) -> dict[str, Any]:
     steps_taken = max(step_numbers) if step_numbers else 0
 
     # Count accounts found
-    acct_match = re.search(r"Got (\d+) account\(s\)", text)
+    acct_match = re.search(r"Got (\d+) (?:account|item)\(s\)", text)
     accounts_found = int(acct_match.group(1)) if acct_match else 0
 
     # Count crises

@@ -161,12 +161,13 @@ export async function fetchToolRuns(toolKey) {
   return response.json()
 }
 
-export async function importLogins(file, selectedRowIds) {
+export async function importLogins(file, selectedRowIds, overwriteRowIds = []) {
   const form = new FormData()
   form.append('file', file)
-  form.append('selected', selectedRowIds.join(','))
-  // Re-upload as multipart — the backend re-parses to get passwords
-  const response = await fetch(`${API_BASE}/logins/import?selected=${selectedRowIds.join(',')}`, {
+  const params = new URLSearchParams()
+  params.set('selected', selectedRowIds.join(','))
+  if (overwriteRowIds.length) params.set('overwrite', overwriteRowIds.join(','))
+  const response = await fetch(`${API_BASE}/logins/import?${params}`, {
     method: 'POST',
     body: form,
   })

@@ -107,6 +107,7 @@ async def run_scrapers(
 
     all_results = {}
     persisted_results = {}
+    all_metrics = {}
 
     for name in to_run:
         print(f"\n=== {name.upper()} ===")
@@ -123,6 +124,7 @@ async def run_scrapers(
 
             all_results[name] = sync.results
             persisted_results[name] = sync.persisted
+            all_metrics[name] = sync.metrics
 
             if sync.error:
                 print(f"[{name}] FAILED: {sync.error}")
@@ -142,6 +144,7 @@ async def run_scrapers(
             name: [item.__dict__ for item in rows] if rows else []
             for name, rows in persisted_results.items()
         },
+        "metrics": all_metrics,
         "summary": accounts_db.get_summary(),
     }
 
@@ -155,6 +158,7 @@ async def main(
         targets,
         download_statements=download_statements,
         interactive=interactive,
+        on_log=lambda msg: print(msg),
     )
 
     print("\n=== RESULTS ===")

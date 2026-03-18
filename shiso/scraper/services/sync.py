@@ -14,7 +14,7 @@ from typing import Any, Callable
 from ..database import SessionLocal
 from ..models.accounts import ScraperLogin, ScraperLoginSyncRun
 from ..services.accounts_db import AccountsDB
-from ..agent.analyst import analyze_run, extract_run_metrics
+from ..agent.analyst import analyze_run
 from ..agent.llm import llm_chat
 from ..agent.scraper import scrape_provider
 
@@ -31,6 +31,7 @@ class SyncRun:
         self.logs: list[str] = []
         self.results: list[dict] = []
         self.persisted: list[Any] = []
+        self.metrics: dict[str, Any] = {}
         self.error: str | None = None
 
     def on_log(self, msg: str) -> None:
@@ -69,7 +70,7 @@ def create_sync_run(login_id: int) -> SyncRun:
 def finalize_sync_run(sync: SyncRun) -> None:
     """Update the ScraperLoginSyncRun and ScraperLogin with final results."""
     finished_at = datetime.utcnow()
-    metrics = extract_run_metrics(sync.logs)
+    metrics = sync.metrics
 
     with SessionLocal() as session:
         db_run = session.get(ScraperLoginSyncRun, sync.run_id)
@@ -128,7 +129,7 @@ async def run_sync(
             on_log(msg)
 
     try:
-        results = await scrape_provider(
+        scrape_result = await scrape_provider(
             provider_key,
             logins,
             download_statements=download_statements,
@@ -137,7 +138,9 @@ async def run_sync(
             on_log=_log,
             workflow=workflow,
         )
+        results = scrape_result.accounts
         sync.results = results
+        sync.metrics = scrape_result.metrics.to_dict()
 
         # Route persistence: non-financial workflows → ToolRunOutput; financial → AccountsDB
         if workflow and workflow.key != "financial_scraper":

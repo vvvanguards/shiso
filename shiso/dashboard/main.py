@@ -316,9 +316,20 @@ def list_providers():
 async def import_preview(file: UploadFile):
     content = (await file.read()).decode("utf-8-sig")
     result = scraper.parse_csv(content)
-    # Strip passwords from preview response
+
+    # Build lookup of existing logins by (provider_key, username)
+    with scraper.SessionLocal() as session:
+        existing: dict[tuple[str, str], int] = {}
+        for login in session.query(scraper.ScraperLogin).all():
+            if login.username:
+                existing[(login.provider_key, login.username.lower())] = login.id
+
+    # Strip passwords and flag duplicates
     for row in result["matched"]:
         row["has_password"] = bool(row.pop("password", None))
+        key = (row["provider_key"], row["username"].lower())
+        row["is_duplicate"] = key in existing
+        row["existing_login_id"] = existing.get(key)
     return result
 
 
@@ -331,54 +342,72 @@ class LoginSyncRequest(BaseModel):
 
 
 @app.post("/api/logins/import")
-async def import_logins(file: UploadFile, selected: str = ""):
+async def import_logins(file: UploadFile, selected: str = "", overwrite: str = ""):
     """Import selected rows from a Chrome passwords CSV.
 
     `selected` is a comma-separated list of row_ids to import.
+    `overwrite` is a comma-separated list of row_ids to overwrite (update existing credentials).
     """
     content = (await file.read()).decode("utf-8-sig")
     result = scraper.parse_csv(content)
 
     selected_ids = {int(x) for x in selected.split(",") if x.strip()}
-    if not selected_ids:
+    overwrite_ids = {int(x) for x in overwrite.split(",") if x.strip()}
+    if not selected_ids and not overwrite_ids:
         raise HTTPException(400, "No rows selected")
 
-    to_import = [r for r in result["matched"] if r["row_id"] in selected_ids]
+    all_matched = {r["row_id"]: r for r in result["matched"]}
 
     with scraper.SessionLocal() as session:
-        # Check for existing (provider_key, username) to avoid dupes
-        existing = set()
+        # Build lookup of existing logins
+        existing: dict[tuple[str, str], scraper.ScraperLogin] = {}
         for login in session.query(scraper.ScraperLogin).all():
             if login.username:
-                existing.add((login.provider_key, login.username.lower()))
+                existing[(login.provider_key, login.username.lower())] = login
 
         imported = 0
+        updated = 0
         skipped = 0
         max_order = session.query(scraper.ScraperLogin).count()
-        for row in to_import:
-            key = (row["provider_key"], row["username"].lower())
-            if key in existing:
-                skipped += 1
+
+        for row_id in selected_ids | overwrite_ids:
+            row = all_matched.get(row_id)
+            if not row:
                 continue
-            login = scraper.ScraperLogin(
-                provider_key=row["provider_key"],
-                label=f'{row["provider_label"]} — {row["username"]}',
-                username=row["username"],
-                password_encrypted=scraper.encrypt(row["password"]) if row.get("password") else None,
-                login_url=row["url"],
-                account_type=row["account_type"],
-                sort_order=max_order + imported,
-            )
-            session.add(login)
-            existing.add(key)
-            imported += 1
+            key = (row["provider_key"], row["username"].lower())
+            existing_login = existing.get(key)
+
+            if existing_login:
+                if row_id in overwrite_ids:
+                    # Update credentials on existing login
+                    existing_login.username = row["username"]
+                    if row.get("password"):
+                        existing_login.password_encrypted = scraper.encrypt(row["password"])
+                    if row.get("url"):
+                        existing_login.login_url = row["url"]
+                    updated += 1
+                else:
+                    skipped += 1
+            else:
+                login = scraper.ScraperLogin(
+                    provider_key=row["provider_key"],
+                    label=f'{row["provider_label"]} — {row["username"]}',
+                    username=row["username"],
+                    password_encrypted=scraper.encrypt(row["password"]) if row.get("password") else None,
+                    login_url=row["url"],
+                    account_type=row["account_type"],
+                    sort_order=max_order + imported,
+                )
+                session.add(login)
+                existing[key] = login
+                imported += 1
         try:
             session.commit()
         except IntegrityError as exc:
             session.rollback()
             _raise_login_integrity_error(exc)
 
-    return {"imported": imported, "skipped": skipped}
+    return {"imported": imported, "updated": updated, "skipped": skipped}
 
 
 @app.post("/api/logins/{login_id}/sync", response_model=LoginSyncStartResponse)

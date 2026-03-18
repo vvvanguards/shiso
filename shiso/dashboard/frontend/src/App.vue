@@ -11,7 +11,7 @@
           <h1 class="display-font text-3xl font-semibold">Shiso</h1>
         </div>
         <div class="flex flex-wrap gap-2">
-          <Button @click="refreshData" :loading="loading" label="Refresh" icon="pi pi-refresh" severity="secondary" size="small" outlined />
+          <Button @click="loadAll" :loading="loading" label="Refresh" icon="pi pi-refresh" severity="secondary" size="small" outlined />
           <Button @click="syncEnabledLogins" :loading="syncingAllLogins" :label="syncingAllLogins ? 'Syncing…' : 'Sync All'" icon="pi pi-sync" severity="success" size="small" />
         </div>
       </div>
@@ -152,7 +152,7 @@
       </Section>
 
       <!-- Tools -->
-      <Section header="Tools" :collapsed="true" persistKey="tools" @toggle="(e) => { if (!e.value && !tools.value.length) loadLogins() }">
+      <Section header="Tools" :collapsed="true" persistKey="tools">
         <div v-if="!tools.length" class="py-4 text-center text-surface-400">No tools registered.</div>
         <div v-else class="space-y-4">
           <DataTable :value="tools" stripedRows size="small">
@@ -189,7 +189,7 @@
       </Section>
 
       <!-- Admin: Manage Logins -->
-      <Section header="Manage Logins" :collapsed="true" persistKey="logins" @toggle="onLoginsToggle" @ready="onLoginsReady">
+      <Section header="Manage Logins" :collapsed="true" persistKey="logins">
         <template #icons>
           <Button @click.stop="openLoginDialog()" icon="pi pi-plus" severity="success" size="small" text rounded />
           <Button
@@ -258,6 +258,7 @@
             <template #start>
               <div class="flex items-center gap-3 text-sm">
                 <Tag :value="`${importPreviewData.matched.length} matched`" severity="success" />
+                <Tag v-if="importDuplicateCount" :value="`${importDuplicateCount} existing`" severity="warn" />
                 <Tag :value="`${importPreviewData.unmatched.length} unmatched`" severity="secondary" />
                 <Tag :value="`${importSelectedRows.length} selected`" severity="info" />
               </div>
@@ -266,7 +267,7 @@
               <div class="flex gap-2">
                 <Button @click="showUnmatched = !showUnmatched" :label="showUnmatched ? 'Hide Unmatched' : 'Show Unmatched'" severity="secondary" size="small" outlined />
                 <Button @click="clearImport" label="Clear" severity="secondary" size="small" outlined />
-                <Button @click="runImport" :loading="importing" :label="`Import ${importSelectedRows.length} Selected`" :disabled="!importSelectedRows.length" severity="success" size="small" />
+                <Button @click="runImport" :loading="importing" :label="importButtonLabel" :disabled="!importSelectedRows.length" severity="success" size="small" />
               </div>
             </template>
           </Toolbar>
@@ -287,6 +288,12 @@
             <Column field="username" header="Username" />
             <Column header="Password">
               <template #body="{ data }">{{ data.has_password ? '••••••••' : '—' }}</template>
+            </Column>
+            <Column header="Status" style="width: 6rem">
+              <template #body="{ data }">
+                <Tag v-if="data.is_duplicate" value="exists" severity="warn" />
+                <Tag v-else value="new" severity="success" />
+              </template>
             </Column>
           </DataTable>
 
@@ -499,6 +506,22 @@ const importSelectedRows = ref([])
 const importing = ref(false)
 const showUnmatched = ref(false)
 
+const importDuplicateCount = computed(() => {
+  if (!importPreviewData.value) return 0
+  return importPreviewData.value.matched.filter(r => r.is_duplicate).length
+})
+
+const importButtonLabel = computed(() => {
+  const sel = importSelectedRows.value
+  if (!sel.length) return 'Import 0 Selected'
+  const newCount = sel.filter(r => !r.is_duplicate).length
+  const dupeCount = sel.filter(r => r.is_duplicate).length
+  const parts = []
+  if (newCount) parts.push(`${newCount} new`)
+  if (dupeCount) parts.push(`${dupeCount} update`)
+  return `Import (${parts.join(', ')})`
+})
+
 function defaultLoginForm() {
   return { provider_key: '', institution: '', label: '', username: '', password: '', login_url: '', account_type: 'Credit Card', tool_key: 'financial_scraper', enabled: true, sort_order: 0 }
 }
@@ -531,39 +554,42 @@ async function loadToolRuns(toolKey) {
   }
 }
 
-// Data loading
-async function loadDashboard() {
+// Data loading — single function for mount + refresh
+async function loadAll() {
   loading.value = true
+  statusMessage.value = ''
+  statusError.value = false
   try {
-    const data = await fetchDashboard()
-    snapshots.value = data.snapshots
-    summary.value = data.summary
-    // Non-critical: don't block dashboard if these fail
-    Promise.all([fetchPromos(true), fetchAccountsList()]).then(([promosData, accounts]) => {
-      promos.value = promosData
-      accountsList.value = accounts.map(a => ({ id: a.id, label: `${a.institution} — ${a.display_name || a.account_mask || 'Unnamed'}` }))
-    }).catch(() => {})
+    const [dashboard, l, p, types, t, promosData, accounts] = await Promise.all([
+      fetchDashboard(),
+      fetchLogins(),
+      fetchProviders(),
+      fetchAccountTypes(),
+      fetchTools(),
+      fetchPromos(true).catch(() => []),
+      fetchAccountsList().catch(() => []),
+    ])
+    snapshots.value = dashboard.snapshots
+    summary.value = dashboard.summary
+    logins.value = l
+    providers.value = p
+    accountTypes.value = types.map(t => t.name)
+    tools.value = t
+    promos.value = promosData
+    accountsList.value = accounts.map(a => ({ id: a.id, label: `${a.institution} — ${a.display_name || a.account_mask || 'Unnamed'}` }))
+  } catch (err) {
+    statusMessage.value = err.message
+    statusError.value = true
   } finally {
     loading.value = false
   }
 }
 
-async function refreshData() {
-  statusMessage.value = ''
-  statusError.value = false
-  try { await loadDashboard() } catch (err) { statusMessage.value = err.message; statusError.value = true }
-}
-
-// Logins
+// Re-fetch just logins (after mutations like delete, import, sync)
 async function loadLogins() {
-  loginsLoading.value = true
   try {
-    const [l, p, types, t] = await Promise.all([fetchLogins(), fetchProviders(), fetchAccountTypes(), fetchTools()])
-    logins.value = l
-    providers.value = p
-    accountTypes.value = types.map(t => t.name)
-    tools.value = t
-  } catch (err) { toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 }) } finally { loginsLoading.value = false }
+    logins.value = await fetchLogins()
+  } catch (err) { toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 }) }
 }
 
 async function syncLoginRow(login) {
@@ -590,8 +616,6 @@ async function syncEnabledLogins() {
   }
 }
 
-function onLoginsToggle(e) { if (!e.value && !logins.value.length) loadLogins() }
-function onLoginsReady(collapsed) { if (!collapsed && !logins.value.length) loadLogins() }
 
 function openLoginDialog(login = null) {
   if (login) {
@@ -653,9 +677,14 @@ async function runImport() {
   if (!importFile.value || !importSelectedRows.value.length) return
   importing.value = true
   try {
-    const selectedIds = importSelectedRows.value.map(r => r.row_id)
-    const result = await importLogins(importFile.value, selectedIds)
-    toast.add({ severity: 'success', summary: 'Import Complete', detail: `Imported ${result.imported}, skipped ${result.skipped} dupes`, life: 5000 })
+    const newIds = importSelectedRows.value.filter(r => !r.is_duplicate).map(r => r.row_id)
+    const overwriteIds = importSelectedRows.value.filter(r => r.is_duplicate).map(r => r.row_id)
+    const result = await importLogins(importFile.value, newIds, overwriteIds)
+    const parts = []
+    if (result.imported) parts.push(`${result.imported} imported`)
+    if (result.updated) parts.push(`${result.updated} updated`)
+    if (result.skipped) parts.push(`${result.skipped} skipped`)
+    toast.add({ severity: 'success', summary: 'Import Complete', detail: parts.join(', '), life: 5000 })
     clearImport()
     await loadLogins()
   } catch (err) { toast.add({ severity: 'error', summary: 'Import Failed', detail: err.message, life: 4000 }) } finally { importing.value = false }
@@ -702,7 +731,7 @@ async function savePromo() {
       toast.add({ severity: 'success', summary: 'Created', detail: 'Promo period added', life: 3000 })
     }
     promoDialogVisible.value = false
-    await loadDashboard()
+    await loadAll()
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
   }
@@ -719,7 +748,7 @@ function confirmDeletePromo(promo) {
       try {
         await apiDeletePromo(promo.id)
         toast.add({ severity: 'info', summary: 'Deleted', detail: 'Promo period removed', life: 3000 })
-        await loadDashboard()
+        await loadAll()
       } catch (err) {
         toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
       }
@@ -757,6 +786,6 @@ function syncTimestamp(login) {
 }
 
 onMounted(async () => {
-  try { await loadDashboard() } catch (err) { statusMessage.value = err.message; statusError.value = true }
+  await loadAll()
 })
 </script>

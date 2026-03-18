@@ -1,10 +1,6 @@
 """
 Sync worker — polls for queued sync runs and processes them one at a time.
 
-After each sync, runs a tuning pass (analyst + optional re-scrape) if no
-other runs are queued. This way the worker improves hints between syncs
-without blocking the queue.
-
 Run as a standalone process:
     uv run python -m shiso.scraper.worker
 
@@ -16,8 +12,6 @@ import logging
 import signal
 from datetime import datetime
 
-from .agent.analyst import analyze_run, extract_run_metrics, load_provider_hints
-from .agent.llm import llm_chat
 from .agent.run import load_accounts
 from .database import SessionLocal, init_db
 from .models.accounts import ScraperLogin, ScraperLoginSyncRun
@@ -28,7 +22,6 @@ from .tools import get_workflow
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL = 3  # seconds
-MAX_TUNE_RUNS = 2  # max additional tuning runs after a sync
 
 
 def _cleanup_stale_runs() -> int:
@@ -64,20 +57,12 @@ def _next_queued_run() -> tuple[int, str] | None:
     return None
 
 
-def _has_queued_runs() -> bool:
-    """Check if there are more queued runs waiting."""
-    return _next_queued_run() is not None
-
-
-async def execute_run(run_id: int) -> tuple[str | None, list[str]]:
-    """Transition a queued run to running, execute it, finalize.
-
-    Returns (provider_key, collected_logs) for post-run tuning.
-    """
+async def execute_run(run_id: int) -> None:
+    """Transition a queued run to running, execute it, finalize."""
     with SessionLocal() as session:
         db_run = session.get(ScraperLoginSyncRun, run_id)
         if not db_run or db_run.status != "queued":
-            return None, []
+            return
         login_id = db_run.scraper_login_id
         db_run.status = "running"
         db_run.started_at = datetime.utcnow()
@@ -112,14 +97,10 @@ async def execute_run(run_id: int) -> tuple[str | None, list[str]]:
                 login.last_sync_error = db_run.error
                 login.last_sync_finished_at = db_run.finished_at
             session.commit()
-        return None, []
+        return
 
     provider_key = next(iter(accounts))
     logins = accounts[provider_key]
-    collected_logs: list[str] = []
-
-    def _on_log(msg: str) -> None:
-        collected_logs.append(msg)
 
     try:
         await run_sync(
@@ -127,94 +108,10 @@ async def execute_run(run_id: int) -> tuple[str | None, list[str]]:
             logins,
             accounts_db=AccountsDB(),
             run_id=run_id,
-            on_log=_on_log,
             workflow=workflow,
         )
     except Exception:
         logger.exception("Sync run %d failed", run_id)
-
-    return provider_key, collected_logs
-
-
-async def _should_tune(provider_key: str, run_metrics: dict, llm_chat_fn) -> bool:
-    """Ask the LLM if another tuning run would help."""
-    hints = load_provider_hints(provider_key)
-    hint_count = sum(len(v) for v in hints.values() if isinstance(v, list)) if hints else 0
-
-    prompt = f"""A scraper just ran for {provider_key}:
-  accounts_found: {run_metrics.get('accounts_found', 0)}
-  accounts_complete: {run_metrics.get('accounts_complete', 0)}
-  steps_taken: {run_metrics.get('steps_taken', 0)}
-  failed_actions: {run_metrics.get('failed_actions', 0)}
-  crises_hit: {run_metrics.get('crises_hit', 0)}
-  active_hints: {hint_count}
-
-Would re-running improve results? Only say yes if there were failures or
-incomplete accounts that better hints could fix.
-
-Respond with ONLY JSON: {{"should_tune": true/false, "reason": "brief"}}"""
-
-    try:
-        result = await llm_chat_fn([
-            {"role": "system", "content": "You decide if a scraper needs more tuning. Be conservative — only tune if there are clear fixable issues."},
-            {"role": "user", "content": prompt},
-        ])
-        if result and isinstance(result, dict):
-            should = result.get("should_tune", False)
-            reason = result.get("reason", "")
-            logger.info("[tune] %s: should_tune=%s — %s", provider_key, should, reason)
-            return bool(should)
-    except Exception:
-        logger.warning("[tune] LLM decision failed for %s, skipping tune", provider_key)
-    return False
-
-
-async def tune_after_sync(provider_key: str, initial_logs: list[str]) -> None:
-    """Run post-sync tuning: analyst + optional re-scrapes if LLM says it would help.
-
-    Bails out immediately if new queued runs arrive.
-    """
-    metrics = extract_run_metrics(initial_logs)
-    previous_metrics = metrics
-
-    for i in range(MAX_TUNE_RUNS):
-        # Don't tune if the queue has work waiting
-        if _has_queued_runs():
-            logger.info("[tune] %s: queue has pending runs, skipping tune", provider_key)
-            return
-
-        # Ask LLM if tuning would help
-        if not await _should_tune(provider_key, metrics, llm_chat):
-            logger.info("[tune] %s: LLM says no more tuning needed", provider_key)
-            return
-
-        logger.info("[tune] %s: running tune pass %d/%d", provider_key, i + 1, MAX_TUNE_RUNS)
-
-        # Re-run the scraper with updated hints
-        accounts = load_accounts()
-        if provider_key not in accounts:
-            return
-
-        collected_logs: list[str] = []
-        try:
-            await run_sync(
-                provider_key,
-                accounts[provider_key],
-                accounts_db=AccountsDB(),
-                on_log=lambda msg: collected_logs.append(msg),
-            )
-            metrics = extract_run_metrics(collected_logs)
-            logger.info(
-                "[tune] %s pass %d: %d accounts (%d complete), %d failures",
-                provider_key, i + 1,
-                metrics.get("accounts_found", 0),
-                metrics.get("accounts_complete", 0),
-                metrics.get("failed_actions", 0),
-            )
-            previous_metrics = metrics
-        except Exception:
-            logger.exception("[tune] %s: tune pass %d failed", provider_key, i + 1)
-            return
 
 
 async def run_worker() -> None:
@@ -244,11 +141,7 @@ async def run_worker() -> None:
             if queued:
                 run_id, provider_key = queued
                 logger.info("Picking up run %d (%s)", run_id, provider_key)
-                provider_key, logs = await execute_run(run_id)
-
-                # Tune if queue is empty and we got logs
-                if provider_key and logs and not _has_queued_runs():
-                    await tune_after_sync(provider_key, logs)
+                await execute_run(run_id)
             else:
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL)

@@ -31,7 +31,7 @@ def scrape(
     statements: bool = typer.Option(False, "--statements", help="Download statement PDFs"),
     auto: bool = typer.Option(False, "--auto", help="Auto mode — skip 2FA prompts"),
     agent_llm: Optional[str] = typer.Option(None, "--agent-llm", help="LLM preset for browser agent"),
-    analyst_llm: Optional[str] = typer.Option(None, "--analyst-llm", help="LLM preset for analyst"),
+    analyst_llm: Optional[str] = typer.Option("openrouter", "--analyst-llm", help="LLM preset for analyst"),
 ) -> None:
     """Run the scraper for one or more providers."""
     from dotenv import load_dotenv
@@ -57,8 +57,23 @@ def scrape(
 @app.command()
 def chrome() -> None:
     """Launch Chrome with the automation profile for manual login."""
-    from shiso.scraper.launch_chrome import main as chrome_main
-    chrome_main()
+    import subprocess
+    from shiso.scraper.launch_chrome import load_config
+    from pathlib import Path
+
+    config = load_config().get("browser", {})
+    chrome_executable = config.get(
+        "chrome_executable",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    )
+    user_data_dir = str(
+        Path(config.get("user_data_dir", "data/browser-profile")).resolve()
+    )
+    Path(user_data_dir).mkdir(parents=True, exist_ok=True)
+
+    subprocess.Popen([chrome_executable, f"--user-data-dir={user_data_dir}"])
+    console.print(f"[green]Chrome launched[/green] with profile: {user_data_dir}")
+    console.print("[dim]Log into sites here. Sessions persist for future scrapes.[/dim]")
 
 
 # ---------------------------------------------------------------------------
