@@ -89,6 +89,7 @@ async def run_scrapers(
     login_ids: list[int] | None = None,
     download_statements: bool = False,
     interactive: bool = False,
+    account_filter: str | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> dict:
     accounts = load_accounts(login_ids=login_ids)
@@ -119,6 +120,7 @@ async def run_scrapers(
                 accounts_db=accounts_db,
                 download_statements=download_statements,
                 interactive=interactive,
+                account_filter=account_filter,
                 on_log=on_log,
             )
 
@@ -155,11 +157,13 @@ async def main(
     targets: list[str] | None = None,
     download_statements: bool = False,
     interactive: bool = False,
+    account_filter: str | None = None,
 ):
     payload = await run_scrapers(
         targets,
         download_statements=download_statements,
         interactive=interactive,
+        account_filter=account_filter,
         on_log=lambda msg: print(msg),
     )
 

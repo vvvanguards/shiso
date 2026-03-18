@@ -30,6 +30,7 @@ def scrape(
     targets: Optional[list[str]] = typer.Argument(None, help="Provider keys (default: all enabled)"),
     statements: bool = typer.Option(False, "--statements", help="Download statement PDFs"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="Pause for 2FA/CAPTCHA instead of skipping"),
+    account: Optional[str] = typer.Option(None, "--account", "-a", help="Filter to specific account name or mask"),
     agent_llm: Optional[str] = typer.Option(None, "--agent-llm", help="LLM preset for browser agent"),
     analyst_llm: Optional[str] = typer.Option("openrouter", "--analyst-llm", help="LLM preset for analyst"),
 ) -> None:
@@ -47,6 +48,7 @@ def scrape(
         targets=targets or None,
         download_statements=statements,
         interactive=interactive,
+        account_filter=account,
     ))
 
 

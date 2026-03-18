@@ -119,6 +119,7 @@ async def run_sync(
     accounts_db: AccountsDB,
     download_statements: bool = False,
     interactive: bool = False,
+    account_filter: str | None = None,
     on_log: Callable[[str], None] | None = None,
     run_id: int | None = None,
     workflow: Any | None = None,
@@ -151,6 +152,7 @@ async def run_sync(
             download_statements=download_statements,
             accounts_db=accounts_db,
             interactive=interactive,
+            account_filter=account_filter,
             on_log=_log,
             workflow=workflow,
         )

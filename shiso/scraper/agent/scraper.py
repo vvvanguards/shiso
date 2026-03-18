@@ -816,13 +816,17 @@ async def scrape_provider(
     download_statements: bool = False,
     accounts_db: Any | None = None,
     interactive: bool = False,
+    account_filter: str | None = None,
     on_log: Callable[[str], None] | None = None,
     workflow: Workflow | None = None,
 ) -> ScrapeResult:
     """Scrape one provider using browser-use Agent.
 
     Pass 1: discover accounts from overview page.
+    Pass 1.5: enrich account details (promo APR, credit limit).
     Pass 2 (if download_statements): download statement PDFs and extract billing fields.
+
+    If account_filter is provided, only process matching accounts (by card_name or account_mask).
     """
     config = _load_config()
     browser_cfg = config["browser"]
@@ -1007,6 +1011,23 @@ async def scrape_provider(
                 metrics.errors.append(f"{label}: {exc}")
                 if on_log:
                     on_log(f"[{provider_key}] Error for {label}: {exc}")
+
+        # --- Apply account filter if specified ---
+        if account_filter and all_accounts:
+            filter_lower = account_filter.lower()
+            filtered = []
+            for acct in all_accounts:
+                card_name = (acct.get("card_name") or "").lower()
+                mask = (acct.get("account_mask") or "").lower()
+                if filter_lower in card_name or filter_lower == mask:
+                    filtered.append(acct)
+            if filtered:
+                if on_log:
+                    on_log(f"[{provider_key}] Filtered to {len(filtered)} account(s) matching '{account_filter}'")
+                all_accounts = filtered
+            else:
+                if on_log:
+                    on_log(f"[{provider_key}] No accounts match filter '{account_filter}', keeping all {len(all_accounts)}")
 
         # --- Pass 1.5: enrich account details (promo APR, credit limit) ---
         if all_accounts:
