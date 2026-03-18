@@ -476,45 +476,6 @@ async def _on_step(agent: Agent, on_log: Callable[[str], None] | None) -> None:
 # Statement downloads — separate Agent task per eligible account
 # ---------------------------------------------------------------------------
 
-def _build_statement_task(
-    provider_key: str,
-    provider_cfg: dict,
-    eligible_accounts: list[dict[str, Any]],
-    dashboard_url: str | None = None,
-) -> str:
-    """Build the Agent task for downloading statement PDFs for all eligible accounts."""
-    institution = provider_cfg.get("institution", provider_key.replace("_", " ").title())
-
-    account_lines = []
-    for acct in eligible_accounts:
-        name = acct.get("card_name", "unknown")
-        mask = acct.get("account_mask", "")
-        mask_hint = f" (ending in {mask})" if mask else ""
-        account_lines.append(f"- {name}{mask_hint}")
-
-    accounts_str = "\n".join(account_lines)
-    dashboard_hint = f"You are starting on the {institution} dashboard at {dashboard_url}.\n" if dashboard_url else ""
-
-    return f"""{dashboard_hint}You need to download the most recent BILLING STATEMENT PDF for each of these accounts:
-{accounts_str}
-
-For EACH account, follow these steps:
-1. Click on the account name/card on the dashboard to open it
-2. Look for "Statements & Activity" link/tab and click it
-3. Click "Go to PDF Statements" or "View PDF Statements"
-4. Find the most recent monthly billing statement in the list
-5. Click the "Download" button/icon next to that statement
-6. WAIT — a "Select File Type" dialog will appear. Click the "Download" link inside that dialog to start the actual download.
-   - Do NOT navigate away until you see the download complete
-   - Wait a few seconds after clicking Download in the dialog
-7. Go BACK to the dashboard (navigate to the overview URL) for the next account
-
-IMPORTANT:
-- Download ONE statement per account — the MOST RECENT billing statement only
-- Skip "Important Notices" or "Account Agreement Changes" — those are NOT statements
-- A real billing statement has a date like "Feb 26, 2026" in the statement list
-- After downloading all statements, you are done"""
-
 
 async def _download_statements(
     browser_session: BrowserSession,
@@ -528,7 +489,7 @@ async def _download_statements(
     start_url: str | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Download the latest statement PDF for each eligible account using a single Agent."""
+    """Download the latest statement PDF for each eligible account, one at a time."""
     stmt_cfg = config.get("statements", {})
     agent_cfg = config.get("agent", {})
     eligible_types = set(stmt_cfg.get("eligible_account_types", ["credit_card", "loan", "line_of_credit"]))
@@ -546,99 +507,93 @@ async def _download_statements(
     if on_log:
         on_log(f"[{provider_key}] Downloading statements for {len(eligible)} account(s)...")
 
-    # Snapshot existing PDFs before download
-    existing_pdfs = set(download_dir.glob("*.pdf"))
-
-    task = _build_statement_task(provider_key, provider_cfg, eligible, dashboard_url)
-
-    # Scale max_steps with number of accounts (~10 steps per account with single-action mode)
-    max_steps = max(stmt_cfg.get("max_steps", 50), len(eligible) * 10)
-
+    institution = provider_cfg.get("institution", provider_key.replace("_", " ").title())
+    downloaded: list[dict[str, Any]] = []
     tools = _build_tools(interactive=interactive)
 
-    agent = Agent(
-        task=task,
-        llm=llm,
-        browser_session=browser_session,
-        tools=tools,
-        use_vision=True,
-        max_steps=max_steps,
-        max_failures=agent_cfg.get("max_failures", 3),
-        max_actions_per_step=1,  # Must be 1 — download requires waiting for dialog
-        directly_open_url=dashboard_url or start_url or "",
-    )
+    for acct in eligible:
+        card_name = acct.get("card_name", "unknown")
+        mask = acct.get("account_mask", "")
+        mask_hint = f" ending in {mask}" if mask else ""
 
-    try:
-        history = await agent.run(
-            on_step_end=lambda a: _on_step(a, on_log),
-        )
-    except Exception as exc:
-        logger.exception("Statement download agent failed for %s", provider_key)
         if on_log:
-            on_log(f"[{provider_key}] Statement agent error: {exc}")
-        return []
+            on_log(f"[{provider_key}]Downloading statement for {card_name}{mask_hint}...")
 
-    # Find all newly downloaded PDFs
-    new_pdfs = sorted(
-        [p for p in download_dir.glob("*.pdf") if p not in existing_pdfs],
-        key=lambda p: p.stat().st_mtime,
-    )
+        # Snapshot existing PDFs before this account's download
+        before_pdfs = set(download_dir.glob("*.pdf"))
 
-    # Rename PDFs: match to accounts by text content, then rename to {mask}_{date}.pdf
-    from .pdf_utils import extract_pdf_text
+        # Build task for this single account
+        task = f"""You are on the {institution} dashboard.
+Download the most recent BILLING STATEMENT PDF for this account: {card_name}{mask_hint}
 
-    downloaded: list[dict[str, Any]] = []
-    for pdf_path in new_pdfs:
-        size = pdf_path.stat().st_size
-        matched_acct = None
+Steps:
+1. Click on the account named "{card_name}" to open it
+2. Find "Statements & Activity" or "Statements" link/tab and click it
+3. Click "Go to PDF Statements" or "View PDF Statements" if present
+4. Find the most recent monthly billing statement (has a date like "Feb 26, 2026")
+5. Click the Download button/icon for that statement
+6. WAIT — a "Select File Type" dialog may appear. Click "Download" inside it
+7. Wait for the download to complete
+
+IMPORTANT:
+- Download ONE statement — the MOST RECENT billing statement only
+- Skip "Important Notices" or "Account Agreement Changes" — not statements
+- When done, call done_action"""
+
+        agent = Agent(
+            task=task,
+            llm=llm,
+            browser_session=browser_session,
+            tools=tools,
+            use_vision=True,
+            max_steps=stmt_cfg.get("max_steps", 30),
+            max_failures=agent_cfg.get("max_failures", 3),
+            max_actions_per_step=1,
+            directly_open_url=dashboard_url or start_url or "",
+        )
 
         try:
-            pdf_text = extract_pdf_text(pdf_path)
-            # Match by account mask
-            for acct in eligible:
-                mask = acct.get("account_mask", "")
-                if mask and mask in pdf_text:
-                    matched_acct = acct
-                    break
-            # Fallback: match by card name
-            if not matched_acct:
-                for acct in eligible:
-                    card = acct.get("card_name", "")
-                    if card and card.lower() in pdf_text.lower():
-                        matched_acct = acct
-                        break
-        except Exception:
-            pass
+            await agent.run(on_step_end=lambda a: _on_step(a, on_log))
+        except Exception as exc:
+            logger.warning("[%s] Statement download failed for %s: %s", provider_key, card_name, exc)
+            if on_log:
+                on_log(f"[{provider_key}] Failed to download statement for {card_name}: {exc}")
+            continue
 
-        # Rename file: {product_slug}_{mask}_{original_stem}.pdf
-        if matched_acct:
-            card_name = matched_acct.get("card_name", "unknown")
-            mask = matched_acct.get("account_mask", "")
+        # Find new PDFs for this account
+        after_pdfs = set(download_dir.glob("*.pdf"))
+        new_pdfs = after_pdfs - before_pdfs
+
+        for pdf_path in new_pdfs:
+            size = pdf_path.stat().st_size
+
+            # Rename immediately with account info
             product_slug = re.sub(r"[^\w]+", "_", card_name).strip("_").lower()[:30]
             parts = [product_slug]
             if mask:
                 parts.append(mask)
             parts.append(pdf_path.stem)
             new_name = "_".join(parts) + ".pdf"
-        else:
-            new_name = pdf_path.name
+            new_path = download_dir / new_name
 
-        new_path = download_dir / new_name
-        if new_path != pdf_path and not new_path.exists():
-            pdf_path.rename(new_path)
-            pdf_path = new_path
+            if new_path != pdf_path and not new_path.exists():
+                try:
+                    pdf_path.rename(new_path)
+                    pdf_path = new_path
+                except Exception:
+                    pass  # Keep original name if rename fails
 
-        downloaded.append({
-            "card_name": matched_acct.get("card_name", pdf_path.stem) if matched_acct else pdf_path.stem,
-            "account_mask": matched_acct.get("account_mask") if matched_acct else None,
-            "file_path": str(pdf_path),
-            "file_size_bytes": size,
-        })
-        if on_log:
-            on_log(f"[{provider_key}] Downloaded: {pdf_path.name} ({size:,} bytes)")
+            downloaded.append({
+                "card_name": card_name,
+                "account_mask": mask,
+                "file_path": str(pdf_path),
+                "file_size_bytes": size,
+            })
+            if on_log:
+                on_log(f"[{provider_key}] Downloaded: {pdf_path.name} ({size:,} bytes)")
 
     if on_log:
-        on_log(f"[{provider_key}] {len(downloaded)} new PDF(s) downloaded")
+        on_log(f"[{provider_key}] {len(downloaded)} statement(s) downloaded")
 
     return downloaded
 
@@ -970,79 +925,56 @@ async def scrape_provider(
                 on_log=on_log,
             )
 
-            # Parse downloaded PDFs, match to DB accounts, persist statements
+            # Parse downloaded PDFs and enrich accounts with statement data
             if statement_results:
                 from .pdf_utils import extract_statement_data, extract_pdf_text
                 from .llm import llm_chat
 
                 for dl in statement_results:
                     try:
-                        # Match PDF to scraped account by mask or card name in text
-                        pdf_text = extract_pdf_text(dl["file_path"])
+                        # Find the account by card_name/mask (already set from download)
+                        card_name = dl.get("card_name", "")
+                        mask = dl.get("account_mask", "")
                         matched_acct = None
                         for acct in all_accounts:
-                            mask = acct.get("account_mask", "")
-                            if mask and mask in pdf_text:
+                            if mask and acct.get("account_mask") == mask:
                                 matched_acct = acct
                                 break
-                        if not matched_acct:
+                        if not matched_acct and card_name:
                             for acct in all_accounts:
-                                card = acct.get("card_name", "")
-                                if card and card.lower() in pdf_text.lower():
+                                if acct.get("card_name") == card_name:
                                     matched_acct = acct
                                     break
 
-stmt_data = await extract_statement_data(dl["file_path"], llm_chat)
-                            if stmt_data:
-                                dl["statement_data"] = stmt_data
-                                if matched_acct:
-                                    dl["card_name"] = matched_acct.get("card_name", dl["card_name"])
-                                    dl["account_mask"] = matched_acct.get("account_mask")
-                                    # Enrich the scraped account dict with PDF-extracted fields
-                                    for field in ("due_date", "minimum_payment", "statement_balance",
-                                                  "last_payment_amount", "last_payment_date",
-                                                  "credit_limit"):
-                                        pdf_val = stmt_data.get(field)
-                                        if pdf_val is not None:
-                                            matched_acct[field] = pdf_val
-                                    for field in ("intro_apr_rate", "intro_apr_end_date", "regular_apr"):
-                                        pdf_val = stmt_data.get(field)
-                                        if pdf_val is not None:
-                                            matched_acct[field] = pdf_val
+                        stmt_data = await extract_statement_data(dl["file_path"], llm_chat)
+                        if stmt_data:
+                            dl["statement_data"] = stmt_data
 
-                                    # Rename PDF to include card name if not already named
-                                    original_path = Path(dl["file_path"])
-                                    card_name = matched_acct.get("card_name", "unknown")
-                                    mask = matched_acct.get("account_mask", "")
-                                    product_slug = re.sub(r"[^\w]+", "_", card_name).strip("_").lower()[:30]
-                                    # Build new name: {card_slug}_{mask}_{original_stem}.pdf
-                                    parts = [product_slug]
-                                    if mask:
-                                        parts.append(mask)
-                                    parts.append(original_path.stem)
-                                    new_name = "_".join(parts) + ".pdf"
-                                    new_path = original_path.parent / new_name
-                                    if new_path != original_path and not new_path.exists():
-                                        try:
-                                            original_path.rename(new_path)
-                                            dl["file_path"] = str(new_path)
-                                            if on_log:
-                                                on_log(f"[{provider_key}] Renamed PDF: {original_path.name} → {new_path.name}")
-                                        except Exception:
-                                            pass  # Keep original name if rename fails
+                            if matched_acct:
+                                # Enrich the scraped account dict with PDF-extracted fields
+                                for field in ("due_date", "minimum_payment", "statement_balance",
+                                              "last_payment_amount", "last_payment_date",
+                                              "credit_limit"):
+                                    pdf_val = stmt_data.get(field)
+                                    if pdf_val is not None:
+                                        matched_acct[field] = pdf_val
+                                for field in ("intro_apr_rate", "intro_apr_end_date", "regular_apr"):
+                                    pdf_val = stmt_data.get(field)
+                                    if pdf_val is not None:
+                                        matched_acct[field] = pdf_val
 
-                                    # Persist to AccountStatement table via accounts_db
-                                    if accounts_db:
-                                        _persist_statement(
-                                            accounts_db, provider_key, matched_acct, dl, stmt_data, on_log,
-                                        )
+                                # Persist to AccountStatement table
+                                if accounts_db:
+                                    _persist_statement(
+                                        accounts_db, provider_key, matched_acct, dl, stmt_data, on_log,
+                                    )
 
-                                    if on_log:
-                                        filled = [f for f in stmt_data if stmt_data[f] is not None]
-                                        on_log(f"[{provider_key}] PDF enriched {matched_acct.get('card_name')}: {', '.join(filled)}")
-                                else:
-                                    if on_log:
-                                        on_log(f"[{provider_key}] PDF {dl['file_path']} — no account match found")
+                                if on_log:
+                                    filled = [f for f in stmt_data if stmt_data[f] is not None]
+                                    on_log(f"[{provider_key}] PDF enriched {card_name}: {', '.join(filled)}")
+                            else:
+                                if on_log:
+                                    on_log(f"[{provider_key}] PDF {dl['file_path']} — no account match found")
                     except Exception as exc:
                         logger.exception("Statement parsing failed for %s", dl["file_path"])
                         if on_log:
