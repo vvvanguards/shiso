@@ -3,8 +3,9 @@
 # Browser agent defaults to browser_use; override with AGENT_LLM.
 
 [browser]
-# Dedicated automation profile using browser-use's bundled Chromium.
-# Sessions persist in this dir across runs. First run: log in manually.
+# Dedicated automation profile. Cookies and sessions persist across runs.
+# First run: human logs in via `shiso auth login <provider>`.
+# Subsequent runs: already authenticated.
 user_data_dir = "data/browser-profile"
 
 [agent]

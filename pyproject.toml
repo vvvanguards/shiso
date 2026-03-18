@@ -18,11 +18,22 @@ dependencies = [
     "cryptography>=42.0.0",
     # PDF parsing
     "pdfplumber>=0.10.0",
+    # CLI
+    "typer>=0.15.0",
+    "rich>=14.0.0",
     # Config
     "pydantic>=2.0.0",
     "python-multipart>=0.0.9",
     "tomli-w>=1.2.0",
+    "python-dotenv>=1.1.0",
 ]
+
+[project.scripts]
+shiso = "shiso.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project.optional-dependencies]
 dev = [

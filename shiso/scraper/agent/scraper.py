@@ -732,9 +732,8 @@ async def scrape_provider(
     download_dir = (Path(stmt_cfg.get("download_dir", "data/statements")) / provider_key).resolve()
     download_dir.mkdir(parents=True, exist_ok=True)
 
-    # Dedicated automation profile — lightweight, no copy, instant startup.
-    # Uses browser-use's bundled Chromium (not your real Chrome).
-    # Log into sites once; sessions persist in data/browser-profile across runs.
+    # Dedicated automation profile — sessions and cookies persist across runs.
+    # First run: human logs in manually. Subsequent runs: already authenticated.
     user_data_dir = Path(browser_cfg.get("user_data_dir", "data/browser-profile")).resolve()
     user_data_dir.mkdir(parents=True, exist_ok=True)
 

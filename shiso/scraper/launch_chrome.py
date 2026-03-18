@@ -1,9 +1,14 @@
-"""Launch a dedicated Chrome automation profile with CDP enabled."""
+"""Launch the dedicated Chrome automation profile.
+
+Opens a Chrome window using the automation profile directory from scraper.toml.
+Log into sites manually in this window — sessions persist across scraper runs.
+"""
 
 from __future__ import annotations
 
 import argparse
 import subprocess
+import sys
 from pathlib import Path
 
 try:
@@ -21,8 +26,7 @@ def load_config() -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Launch Chrome for dashboard scraping")
-    parser.add_argument("--port", type=int, default=9222, help="Remote debugging port")
+    parser = argparse.ArgumentParser(description="Launch Chrome automation profile")
     parser.add_argument(
         "--user-data-dir",
         default=None,
@@ -31,25 +35,22 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config().get("browser", {})
-    chrome_executable = config.get("chrome_executable", r"C:\Program Files\Google\Chrome\Application\chrome.exe")
-    user_data_dir = args.user_data_dir or config.get(
-        "automation_user_data_dir",
-        str(Path.home() / "AppData/Local/Google/Chrome/Automation"),
+    chrome_executable = config.get(
+        "chrome_executable",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    )
+    user_data_dir = args.user_data_dir or str(
+        Path(config.get("user_data_dir", "data/browser-profile")).resolve()
     )
 
     Path(user_data_dir).mkdir(parents=True, exist_ok=True)
 
-    command = [
-        chrome_executable,
-        f"--remote-debugging-port={args.port}",
-        f"--user-data-dir={user_data_dir}",
-    ]
-
+    command = [chrome_executable, f"--user-data-dir={user_data_dir}"]
     subprocess.Popen(command)
+
     print(f"[chrome] launched: {chrome_executable}")
     print(f"[chrome] profile: {user_data_dir}")
-    print(f"[chrome] cdp: http://127.0.0.1:{args.port}")
-    print("[chrome] sign into sites once in this profile, then reuse it for future scrapes")
+    print("[chrome] Log into sites in this window. Sessions persist for future scrapes.")
 
 
 if __name__ == "__main__":
