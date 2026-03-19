@@ -33,6 +33,7 @@ from browser_use.llm import ChatOllama, ChatOpenAI, ChatOpenRouter
 from browser_use.llm.browser_use.chat import ChatBrowserUse
 
 from .playbooks import load_provider_playbook
+from .prompts import render as render_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -234,33 +235,10 @@ def _build_preamble(
     provider_key: str,
     provider_cfg: dict,
     dashboard_url: str | None,
-    needs_logout: bool = False,
 ) -> str:
     """Build the universal login/2FA/navigation preamble shared by all workflows."""
     institution = provider_cfg.get("institution", provider_key.replace("_", " ").title())
-
-    parts = []
-    if needs_logout:
-        parts.append(
-            f"IMPORTANT: You may already be logged into {institution} as a different user. "
-            "Before doing anything else, find and click the Log Out / Sign Out link. "
-            "Look in the account menu, profile dropdown, or page footer. "
-            "Wait for the logout to complete before proceeding."
-        )
-
-    parts.extend([
-        f"Go to the {institution} website.",
-        "Log in with username x_username and password x_password. "
-        "If you are already logged in, verify the account matches x_username. "
-        "If it does not match (different name, email, or account), log out first and then log in with the correct credentials.",
-        "If you encounter a 2FA prompt, verification code screen, CAPTCHA, or any security "
-        "challenge you cannot complete yourself, call the pause_for_human action and wait.",
-    ])
-
-    if dashboard_url:
-        parts.append(f"After logging in, navigate to {dashboard_url}.")
-
-    return "\n\n".join(parts)
+    return render_prompt("preamble.md", institution=institution, dashboard_url=dashboard_url)
 
 
 def _build_task(
@@ -269,7 +247,6 @@ def _build_task(
     dashboard_url: str | None,
     workflow: Workflow,
     extraction_prompt: str,
-    needs_logout: bool = False,
 ) -> str:
     """Build the full Agent task with the workflow instructions last.
 
@@ -277,7 +254,7 @@ def _build_task(
     contract. Keeping the workflow prompt last prevents stale provider notes
     from overriding pass-specific rules like "stay on the overview page".
     """
-    preamble = _build_preamble(provider_key, provider_cfg, dashboard_url, needs_logout=needs_logout)
+    preamble = _build_preamble(provider_key, provider_cfg, dashboard_url)
 
     parts = [preamble]
     if extraction_prompt:
@@ -558,38 +535,12 @@ async def _enrich_account_details(
         if on_log:
             on_log(f"[{provider_key}] Enriching details for {card_name}{mask_hint}...")
 
-        # Build task for this single account
-        task = f"""You are on the {institution} dashboard.
-Navigate to the account "{card_name}"{mask_hint} and extract detailed information.
-
-Steps:
-1. Click on the account named "{card_name}" to open its details
-2. Look for promotional APR information (intro APR, promo end date, regular APR after promo)
-3. Find the credit limit or spending power
-4. Find the current interest rate/APR
-5. Return the extracted information
-
-Look for fields like:
-- "Intro APR", "Promotional APR", "0% intro", "0% APR for X months"
-- "Go-to rate", "Standard APR", "Regular APR", "APR after promo"
-- "Promo end date", "Rate valid until", "Offer expires"
-- "Credit limit", "Spending power", "Credit line"
-- "Interest rate", "APR", "Annual percentage rate"
-
-Return a JSON object with these fields (use null if not found):
-{{
-  "intro_apr_rate": <float or null>,
-  "intro_apr_end_date": "<YYYY-MM-DD or null>",
-  "regular_apr": <float or null>,
-  "promo_type": "<purchase|balance_transfer|general|null>",
-  "credit_limit": <float or null>,
-  "interest_rate": <float or null>
-}}
-
-IMPORTANT:
-- Stay on the account detail/summary page only — do NOT open statements, PDFs, or external pages.
-- Do NOT navigate to any URL outside the dashboard.
-- After extracting, navigate back to the dashboard/account summary and call done."""
+        task = render_prompt(
+            "enrich_details.md",
+            institution=institution,
+            card_name=card_name,
+            mask_hint=mask_hint,
+        )
 
         agent = Agent(
             task=task,
@@ -695,49 +646,12 @@ async def _download_statements(
         # Snapshot existing PDFs before this account's download
         before_pdfs = set(download_dir.glob("*.pdf"))
 
-        # Build task for this single account
-        task = f"""You are on the {institution} dashboard.
-Open the most recent BILLING STATEMENT for this account: {card_name}{mask_hint}
-
-Steps:
-1. Click on the account named "{card_name}" to open it
-2. Find "Statements & Activity" or "Statements" link/tab and click it
-3. Find the most recent monthly billing statement (has a date like "Feb 26, 2026")
-4. Click to view/open the statement — it may open in browser or download
-5. If it opens in browser: navigate through pages to find billing details
-6. If it downloads instead: note that the file was downloaded
-
-When viewing the statement, extract these fields (use null if not found):
-- due_date: Payment due date (YYYY-MM-DD)
-- minimum_payment: Minimum payment due
-- statement_balance: New balance / statement balance
-- credit_limit: Credit line / spending limit
-- intro_apr_rate: Promotional/intro APR rate (e.g. 0.0 for 0%)
-- intro_apr_end_date: When intro APR ends (YYYY-MM-DD)
-- regular_apr: Standard APR after promo ends
-- statement_date: Statement closing date (YYYY-MM-DD)
-
-Look for sections like:
-- "Interest Charge Calculation", "Rate Information", "APR Summary"
-- Payment summary showing due date, minimum payment, balance
-
-Return a JSON object with all found fields:
-{{
-  "due_date": "<YYYY-MM-DD or null>",
-  "minimum_payment": <float or null>,
-  "statement_balance": <float or null>,
-  "credit_limit": <float or null>,
-  "intro_apr_rate": <float or null>,
-  "intro_apr_end_date": "<YYYY-MM-DD or null>",
-  "regular_apr": <float or null>,
-  "statement_date": "<YYYY-MM-DD or null>",
-  "file_downloaded": <true if file saved to disk, false if viewed in browser>
-}}
-
-IMPORTANT:
-- Open ONE statement — the MOST RECENT billing statement only
-- Skip "Important Notices" or "Account Agreement Changes" — not statements
-- When done extracting, call done_action"""
+        task = render_prompt(
+            "download_statement.md",
+            institution=institution,
+            card_name=card_name,
+            mask_hint=mask_hint,
+        )
 
         agent = Agent(
             task=task,
@@ -1066,7 +980,6 @@ async def scrape_provider(
         start_url: str = ""
         dashboard_url: str | None = str(provider_cfg.get("dashboard_url") or "").strip() or None
 
-        logins_completed = 0
         for login in logins:
             login_id = login.get("id")
             label = login.get("label", provider_key)
@@ -1099,7 +1012,6 @@ async def scrape_provider(
                 dashboard_url,
                 active_wf,
                 playbook.extraction_context(),
-                needs_logout=logins_completed > 0,
             )
 
             tools = _build_tools(interactive=interactive)
@@ -1203,7 +1115,6 @@ async def scrape_provider(
 
                 # Mark login as authenticated
                 _update_auth_status(login_id, "authenticated")
-                logins_completed += 1
 
             except _HumanPauseSkipped:
                 _update_auth_status(login_id, "needs_2fa")

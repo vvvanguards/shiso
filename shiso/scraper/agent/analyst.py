@@ -17,13 +17,13 @@ except ModuleNotFoundError:
 import tomli_w
 
 from .playbooks import load_provider_playbook, save_provider_playbook_hints
+from .prompts import render as render_prompt
 from .scraper import ScrapeMetrics
 
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 CONFIG_PATH = CONFIG_DIR / "scraper.toml"
-_PROMPT_PATH = CONFIG_DIR / "prompts" / "analyst.md"
 
 _CONFIG_PATCH_INT_RANGES: dict[str, tuple[int, int]] = {
     "max_steps": (10, 120),
@@ -113,9 +113,6 @@ class AnalystResult:
             "navigation_tips": self.navigation_tips,
         }
 
-
-def _load_prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
 def load_provider_hints(provider_key: str) -> dict[str, Any]:
@@ -236,36 +233,28 @@ async def analyze_run(
         logger.info("No issues detected in %s run, skipping analysis", provider_key)
         return {}
 
-    log_text = "\n".join(log_lines)
-
     playbook = load_provider_playbook(provider_key)
     existing_hints = playbook.learned_hints()
-    existing_hints_text = json.dumps(existing_hints, indent=2) if existing_hints else "None — this is the first analysis for this provider."
-    existing_extraction_prompt = playbook.extraction_context() or "None — there is no provider-specific extraction prompt yet."
 
     provider_config = _load_provider_config(provider_key)
-    provider_config_text = json.dumps(provider_config, indent=2) if provider_config else "No provider config found."
 
-    prompt_template = _load_prompt()
-    prompt = (
-        prompt_template
-        .replace("{provider_key}", provider_key)
-        .replace("{logs}", log_text)
-        .replace("{existing_hints}", existing_hints_text)
-        .replace("{existing_extraction_prompt}", existing_extraction_prompt)
-        .replace("{provider_config}", provider_config_text)
-    )
-
+    prev_metrics_json = None
+    curr_metrics_json = None
     if previous_metrics:
         current_metrics = extract_run_metrics(log_lines)
-        comparison = (
-            f"\n\nPREVIOUS RUN METRICS: {json.dumps(previous_metrics.to_dict())}"
-            f"\nCURRENT RUN METRICS: {json.dumps(current_metrics.to_dict())}"
-            f"\nCompare these to assess whether existing hints are helping. "
-            f"If the same failures repeat, rewrite the relevant hint more forcefully. "
-            f"If metrics improved, note what worked."
-        )
-        prompt += comparison
+        prev_metrics_json = json.dumps(previous_metrics.to_dict())
+        curr_metrics_json = json.dumps(current_metrics.to_dict())
+
+    prompt = render_prompt(
+        "analyst.md",
+        provider_key=provider_key,
+        logs="\n".join(log_lines),
+        existing_hints=json.dumps(existing_hints, indent=2) if existing_hints else "None — this is the first analysis for this provider.",
+        existing_extraction_prompt=playbook.extraction_context() or "None — there is no provider-specific extraction prompt yet.",
+        provider_config=json.dumps(provider_config, indent=2) if provider_config else "No provider config found.",
+        previous_metrics=prev_metrics_json,
+        current_metrics=curr_metrics_json,
+    )
 
     messages = [
         {"role": "system", "content": prompt},

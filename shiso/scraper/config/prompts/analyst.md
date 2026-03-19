@@ -1,16 +1,16 @@
-You are analyzing scraper run logs for the financial website provider "{provider_key}".
+You are analyzing scraper run logs for the financial website provider "{{ provider_key }}".
 
 LOGS:
-{logs}
+{{ logs }}
 
 EXISTING HINTS (from previous analysis):
-{existing_hints}
+{{ existing_hints }}
 
 CURRENT EXTRACTION PROMPT:
-{existing_extraction_prompt}
+{{ existing_extraction_prompt }}
 
 CURRENT PROVIDER CONFIG:
-{provider_config}
+{{ provider_config }}
 
 Analyze the logs and produce updated hints, extraction guidance, AND config recommendations for future runs.
 
@@ -52,6 +52,7 @@ Analyze the logs and produce updated hints, extraction guidance, AND config reco
 - `extraction_prompt`, if present, should REPLACE the current extraction prompt for this provider.
 - Config patches are MERGED into existing config — only include keys to add or change.
 
+{% raw %}
 Return JSON only:
 ```json
 {
@@ -67,3 +68,10 @@ Return JSON only:
   }
 }
 ```
+{% endraw %}
+{% if previous_metrics %}
+
+PREVIOUS RUN METRICS: {{ previous_metrics }}
+CURRENT RUN METRICS: {{ current_metrics }}
+Compare these to assess whether existing hints are helping. If the same failures repeat, rewrite the relevant hint more forcefully. If metrics improved, note what worked.
+{% endif %}
