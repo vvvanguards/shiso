@@ -131,34 +131,26 @@ def auth(
 
 @app.command()
 def start() -> None:
-    """Start API + worker + frontend (dev mode)."""
+    """Start API + worker (dev mode). Use 'just dev' for full stack with frontend."""
     import subprocess
     console.print("[bold]Starting shiso services...[/bold]")
 
     procs = []
     try:
         procs.append(subprocess.Popen(
-            [sys.executable, "-m", "shiso.dashboard.main"],
+            [sys.executable, "-m", "uvicorn", "shiso.dashboard.main:app", "--reload", "--port", "8002"],
             cwd=str(Path(__file__).parent.parent),
         ))
-        console.print("  [green]API[/green] started (with reload)")
+        console.print("  [green]API[/green] started on port 8002")
 
         procs.append(subprocess.Popen(
-            [sys.executable, "-m", "shiso.scraper.worker", "--reload"],
+            [sys.executable, "-m", "shiso.scraper.worker"],
             cwd=str(Path(__file__).parent.parent),
         ))
-        console.print("  [green]Worker[/green] started (with reload)")
-
-        frontend_dir = Path(__file__).parent / "dashboard" / "frontend"
-        if (frontend_dir / "package.json").exists():
-            procs.append(subprocess.Popen(
-                ["npm", "run", "dev"],
-                cwd=str(frontend_dir),
-                shell=True,
-            ))
-            console.print("  [green]Frontend[/green] started")
+        console.print("  [green]Worker[/green] started")
 
         console.print("\n[dim]Press Ctrl+C to stop all services[/dim]")
+        console.print("[dim]Run 'just dev' for full stack with frontend[/dim]")
         for p in procs:
             p.wait()
     except KeyboardInterrupt:
