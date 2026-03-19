@@ -4,13 +4,13 @@ set shell := ["powershell", "-Command"]
 
 # Default: start all services (frontend + worker + API)
 dev:
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '{{PWD}}/shiso/dashboard/frontend'; npm run dev"
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '{{PWD}}'; uv run python -m shiso.scraper.worker"
+    cd shiso/dashboard/frontend; npm run dev
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "uv run python -m shiso.scraper.worker"
     uv run uvicorn shiso.dashboard.main:app --reload --port 8002
 
 # Start API + worker only (no frontend)
 start:
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '{{PWD}}'; uv run python -m shiso.scraper.worker"
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "uv run python -m shiso.scraper.worker"
     uv run uvicorn shiso.dashboard.main:app --reload --port 8002
 
 # Worker only
@@ -20,21 +20,6 @@ worker:
 # Frontend only (needs API running on port 8002)
 frontend:
     cd shiso/dashboard/frontend; npm run dev
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$(Get-Location)'; uv run python -m shiso.scraper.worker"
-    uv run uvicorn shiso.dashboard.main:app --reload --port 8002
-
-# Start API + worker only (no frontend)
-start:
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$(Get-Location)'; uv run python -m shiso.scraper.worker"
-    uv run uvicorn shiso.dashboard.main:app --reload --port 8002
-
-# Worker only
-worker:
-    uv run python -m shiso.scraper.worker
-
-# Frontend only (needs API running on port 8002)
-frontend:
-    cd shiso/dashboard; npm run dev
 
 # Sync all providers (run scrapers in auto mode)
 sync:
