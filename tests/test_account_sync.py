@@ -129,6 +129,8 @@ def test_scrape_provider_applies_account_filter_without_crashing(monkeypatch):
         def system_message(self):
             return ""
 
+        failed_actions: list = []
+
     class DummyHistory:
         def errors(self):
             return []
@@ -237,6 +239,8 @@ def test_scrape_provider_account_filter_no_match_returns_empty(monkeypatch):
 
         def system_message(self):
             return ""
+
+        failed_actions: list = []
 
     class DummyHistory:
         def errors(self):

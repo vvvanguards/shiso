@@ -15,8 +15,12 @@ uv run shiso scrape             # Run all scrapers (auto mode)
 uv run shiso scrape amex -i     # Run one provider (interactive, pauses for 2FA)
 uv run shiso chrome             # Launch Chrome automation profile
 uv run shiso providers          # List configured providers
-uv run shiso start              # Start API + worker + frontend
-uv run shiso tune amex          # Tune scraper hints for a provider
+just dev                        # Start API + worker + frontend (PowerShell)
+just start                      # Start API + worker only (no frontend)
+just worker                     # Start worker only
+just scrape                     # Run all scrapers
+just chrome                     # Launch Chrome
+just tune amex                  # Tune scraper hints for a provider
 ```
 
 ## Architecture
@@ -54,3 +58,22 @@ Uses a dedicated automation profile at `data/browser-profile/`. Cookies and sess
 - Imported via Chrome password CSV export (dashboard → Import Passwords)
 - Import detects duplicates by `(provider_key, username)` and supports overwriting
 - Encryption key at `shiso/scraper/config/.fernet.key` (gitignored, auto-generated)
+
+## Srclight MCP Server
+
+Srclight provides code intelligence for AI agents. It indexes the codebase and exposes 29 MCP tools for symbol search, call graphs, git change intelligence, and semantic search.
+
+**When to use:**
+
+- Use `codebase_map()` at the start of a session to get an overview
+- Use `search_symbols(query)` to find functions, classes, or variables by name
+- Use `get_callers(name)` / `get_callees(name)` to understand call relationships
+- Use `blame_symbol(name)` to see git history for a specific symbol
+- Use `hybrid_search(query)` for semantic search (requires embeddings to be configured)
+
+**Key tools:**
+- `codebase_map()` — Get project overview (call first each session)
+- `search_symbols(query)` — Search symbol names, code, and docs
+- `get_callers(name)` / `get_callees(name)` — Relationship graphs
+- `blame_symbol(name)` — Git blame for a symbol
+- `hybrid_search(query)` — Keyword + semantic search (needs embeddings)

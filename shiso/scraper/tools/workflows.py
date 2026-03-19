@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model
 from sqlalchemy.exc import OperationalError
@@ -312,6 +312,8 @@ class AccountOutput(BaseModel):
 
 class AccountListOutput(BaseModel):
     accounts: list[AccountOutput]
+    verdict: Literal["success", "blocked_2fa", "blocked_login", "blocked_other"] | None = None
+    verdict_reason: str | None = None
 
 
 class TenantLead(BaseModel):
@@ -406,7 +408,14 @@ For each account, extract whatever is visible on the overview page:
 Do NOT click into individual account detail pages — just capture what's on the overview.
 
 Do NOT call done until you have clicked every 'view more' button and scrolled \
-the full page. Missing accounts is unacceptable. Return all accounts as structured output.""",
+the full page. Missing accounts is unacceptable. Return all accounts as structured output.
+
+IMPORTANT: Before calling done, you MUST also set:
+- verdict: "success" if you successfully extracted all visible accounts, OR one of:
+  - "blocked_2fa" if you encountered a 2FA/verification/code prompt that prevented access
+  - "blocked_login" if you encountered a login failure (wrong credentials, account locked, etc.)
+  - "blocked_other" if you encountered any other blocking issue (CAPTCHA, service error, etc.)
+- verdict_reason: A brief 1-sentence explanation of why (e.g. "2FA required via SMS code", "Invalid username or password")""",
 ))
 
 ZILLOW_LEADS_WORKFLOW = register(Workflow(

@@ -5,12 +5,10 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 app = typer.Typer(
@@ -97,7 +95,7 @@ def providers() -> None:
     table.add_column("Labels")
 
     for key, logins in sorted(accounts.items()):
-        labels = ", ".join(l.get("label", key) for l in logins)
+        labels = ", ".join(login.get("label", key) for login in logins)
         table.add_row(key, str(len(logins)), labels)
 
     console.print(table)
@@ -123,40 +121,6 @@ def auth(
     sys.argv = ["shiso-auth", action] + (targets or [])
     from shiso.scraper.agent import auth as auth_module
     auth_module.main()
-
-
-# ---------------------------------------------------------------------------
-# shiso start
-# ---------------------------------------------------------------------------
-
-@app.command()
-def start() -> None:
-    """Start API + worker (dev mode). Use 'just dev' for full stack with frontend."""
-    import subprocess
-    console.print("[bold]Starting shiso services...[/bold]")
-
-    procs = []
-    try:
-        procs.append(subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "shiso.dashboard.main:app", "--reload", "--port", "8002"],
-            cwd=str(Path(__file__).parent.parent),
-        ))
-        console.print("  [green]API[/green] started on port 8002")
-
-        procs.append(subprocess.Popen(
-            [sys.executable, "-m", "shiso.scraper.worker"],
-            cwd=str(Path(__file__).parent.parent),
-        ))
-        console.print("  [green]Worker[/green] started")
-
-        console.print("\n[dim]Press Ctrl+C to stop all services[/dim]")
-        console.print("[dim]Run 'just dev' for full stack with frontend[/dim]")
-        for p in procs:
-            p.wait()
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Stopping services...[/yellow]")
-        for p in procs:
-            p.terminate()
 
 
 # ---------------------------------------------------------------------------

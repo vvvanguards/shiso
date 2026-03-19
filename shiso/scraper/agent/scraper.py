@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
@@ -147,6 +147,14 @@ class ScrapeResult:
 
 
 @dataclass
+class AuthAssessment(BaseModel):
+    """Structured assessment of an agent run outcome."""
+    status: Literal["authenticated", "needs_2fa", "login_failed", "blocked"] = "authenticated"
+    reason: str = ""
+    category: Literal["success", "blocked_2fa", "blocked_login", "blocked_captcha", "blocked_other"] = "success"
+
+
+@dataclass
 class ScrapeContext:
     """Run-scoped configuration carried through all scraper functions."""
     provider_key: str
@@ -229,6 +237,95 @@ def _build_llm(config: dict, *, agent_cfg: dict | None = None) -> Any:
 
     # Generic OpenAI-compatible endpoint (OpenAI, vLLM, LM Studio, etc.)
     return ChatOpenAI(model=str(model), api_key=str(api_key) if api_key else None, base_url=base_url, timeout=timeout)
+
+
+ASSESSMENT_PROMPT = """You are evaluating a browser automation agent's run for a financial scraping task.
+
+Given the agent's final result and failure information, categorize the outcome:
+
+CATEGORIES:
+- success: Agent extracted accounts and completed the task
+- blocked_2fa: Agent hit 2FA/multi-factor authentication, verification code, or security challenge
+- blocked_login: Agent hit credential issues (wrong password, account locked, etc.)
+- blocked_captcha: Agent hit CAPTCHA or anti-bot measures
+- blocked_other: Agent was blocked by any other issue (page not loading, site error, etc.)
+
+Respond with this JSON structure ONLY (no text before or after):
+{
+  "category": "success|blocked_2fa|blocked_login|blocked_captcha|blocked_other",
+  "status": "authenticated|needs_2fa|login_failed|blocked",
+  "reason": "1-2 sentence explanation"
+}
+
+Map category to status:
+- success → authenticated
+- blocked_2fa → needs_2fa
+- blocked_login → login_failed
+- blocked_captcha → blocked
+- blocked_other → blocked"""
+
+
+async def _assess_run(
+    history: Any,
+    llm: Any,
+    accounts_found: int,
+    provider_key: str,
+) -> AuthAssessment:
+    """Use LLM to assess what happened in the agent run and return structured outcome."""
+    try:
+        final_result = history.final_result() or ""
+        judge = history.judgement() if history else None
+        errors = [e for e in history.errors() if e][:5] if history else []
+        last_action = history.last_action() if history else None
+
+        # Build assessment prompt with context
+        context = f"""Provider: {provider_key}
+Accounts found: {accounts_found}
+Last action: {last_action}
+Errors: {errors}
+Final result: {final_result[:500] if final_result else 'none'}
+"""
+        if judge:
+            context += f"\nJudge verdict: {judge.get('verdict')}\nJudge failure_reason: {judge.get('failure_reason', '')}"
+            if judge.get('reached_captcha'):
+                context += "\n(Judge notes: CAPTCHA was reached)"
+
+        response = await llm.acompletion([
+            {"role": "system", "content": ASSESSMENT_PROMPT},
+            {"role": "user", "content": context},
+        ])
+        content = response.content if hasattr(response, "content") else str(response)
+
+        # Parse JSON response
+        import json
+        # Try to extract JSON from response
+        json_start = content.find("{")
+        json_end = content.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            parsed = json.loads(content[json_start:json_end])
+            return AuthAssessment(
+                category=parsed.get("category", "success"),
+                status=parsed.get("status", "authenticated"),
+                reason=parsed.get("reason", ""),
+            )
+    except Exception as exc:
+        logger.debug("Assessment failed: %s", exc)
+
+    # Fallback: use judge verdict if available
+    if judge and judge.get("verdict") is False:
+        failure_reason = judge.get("failure_reason", "").lower()
+        if "2fa" in failure_reason or "verification" in failure_reason or "security code" in failure_reason:
+            return AuthAssessment(category="blocked_2fa", status="needs_2fa", reason=failure_reason)
+        if "credential" in failure_reason or "password" in failure_reason or "login" in failure_reason:
+            return AuthAssessment(category="blocked_login", status="login_failed", reason=failure_reason)
+        if "captcha" in failure_reason:
+            return AuthAssessment(category="blocked_captcha", status="blocked", reason=failure_reason)
+        return AuthAssessment(category="blocked_other", status="blocked", reason=failure_reason)
+
+    # Default: success
+    if accounts_found > 0:
+        return AuthAssessment(category="success", status="authenticated", reason=f"Found {accounts_found} accounts")
+    return AuthAssessment(category="blocked_other", status="needs_2fa", reason="No accounts extracted")
 
 
 def _build_preamble(
@@ -929,17 +1026,6 @@ async def scrape_provider(
     # Get timeout config (default 30 minutes), allow per-provider override
     provider_timeout = provider_cfg.get("timeout", agent_cfg.get("provider_timeout", 1800))
 
-    ctx = ScrapeContext(
-        provider_key=provider_key,
-        interactive=interactive,
-        download_statements=download_statements,
-        accounts_db=accounts_db,
-        on_log=on_log,
-        config=config,
-        provider_cfg=provider_cfg,
-        agent_cfg=agent_cfg,
-    )
-
     # Set up download directory for statement PDFs (must be absolute for CDP)
     download_dir = (Path(stmt_cfg.get("download_dir", "data/statements")) / provider_key).resolve()
     download_dir.mkdir(parents=True, exist_ok=True)
@@ -1054,6 +1140,8 @@ async def scrape_provider(
                 # --- Pass 1: extract accounts from overview ---
                 result = history.get_structured_output(output_schema)
                 login_accounts: list[dict] = []
+                verdict: str | None = None
+                verdict_reason: str | None = None
                 if result:
                     result_dict = result.model_dump()
                     # Use the workflow's result_key to extract the list
@@ -1061,6 +1149,9 @@ async def scrape_provider(
                     if not login_accounts:
                         # Fallback: find first list field
                         login_accounts = next((v for v in result_dict.values() if isinstance(v, list)), []) or []
+                    # Extract verdict if present
+                    verdict = result_dict.get("verdict")
+                    verdict_reason = result_dict.get("verdict_reason")
                 if not login_accounts:
                     # Fallback: try parsing final_result as JSON
                     raw_text = history.final_result()
@@ -1068,6 +1159,8 @@ async def scrape_provider(
                         try:
                             parsed = json.loads(raw_text)
                             if isinstance(parsed, dict):
+                                verdict = verdict or parsed.get("verdict")
+                                verdict_reason = verdict_reason or parsed.get("verdict_reason")
                                 # Find the first list value in the dict
                                 list_val = next((v for v in parsed.values() if isinstance(v, list)), None)
                                 if list_val is not None:
@@ -1079,7 +1172,7 @@ async def scrape_provider(
 
                 if not login_accounts:
                     if on_log:
-                        on_log(f"[{provider_key}] No accounts found for {label}")
+                        on_log(f"[{provider_key}] No accounts found for {label} (verdict: {verdict or 'none'})")
                 else:
                     if on_log:
                         on_log(f"[{provider_key}] Pass 1: found {len(login_accounts)} item(s)")
@@ -1113,8 +1206,16 @@ async def scrape_provider(
                         if learned:
                             dashboard_url = learned
 
-                # Mark login as authenticated
-                _update_auth_status(login_id, "authenticated")
+                # Determine auth status via structured LLM assessment
+                assessment = await _assess_run(
+                    history=history,
+                    llm=llm,
+                    accounts_found=len(login_accounts),
+                    provider_key=provider_key,
+                )
+                _update_auth_status(login_id, assessment.status)
+                if on_log:
+                    on_log(f"[{provider_key}] {label}: {assessment.category} — {assessment.reason[:100]}")
 
             except _HumanPauseSkipped:
                 _update_auth_status(login_id, "needs_2fa")
