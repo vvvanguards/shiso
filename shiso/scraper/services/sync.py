@@ -124,6 +124,7 @@ async def run_sync(
     on_log: Callable[[str], None] | None = None,
     run_id: int | None = None,
     workflow: Any | None = None,
+    human_input_handler: Callable | None = None,
 ) -> SyncRun:
     """Run a full sync for one provider: scrape, persist, analyze.
 
@@ -157,6 +158,7 @@ async def run_sync(
             on_log=_log,
             workflow=workflow,
             run_id=sync.run_id,
+            human_input_handler=human_input_handler,
         )
         results = scrape_result.accounts
         sync.results = results

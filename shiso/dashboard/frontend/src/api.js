@@ -288,6 +288,36 @@ export async function respondInteractiveAuth(loginId, data) {
   return response.json()
 }
 
+// Agent Sessions — generalized human-in-the-loop
+
+export async function fetchAgentSessions() {
+  const response = await fetch(`${API_BASE}/agent-sessions`)
+  if (!response.ok) throw new Error('Failed to fetch agent sessions')
+  return response.json()
+}
+
+export async function fetchAgentSession(runId) {
+  const response = await fetch(`${API_BASE}/agent-sessions/${runId}`)
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to fetch agent session')
+  }
+  return response.json()
+}
+
+export async function respondAgentSession(runId, data) {
+  const response = await fetch(`${API_BASE}/agent-sessions/${runId}/respond`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to send response to agent')
+  }
+  return response.json()
+}
+
 export async function fetchRewardsPrograms() {
   const response = await fetch(`${API_BASE}/rewards`)
   if (!response.ok) throw new Error('Failed to fetch rewards programs')

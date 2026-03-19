@@ -1,9 +1,9 @@
 <template>
   <Dialog v-model:visible="visible" header="Interactive Auth" modal :style="{ width: '520px' }" @hide="emit('hide')">
     <div class="flex flex-col gap-4 pt-2">
-      <div v-if="login" class="text-sm text-surface-300">
+      <div v-if="login" class="text-sm text-shiso-300">
         <div class="font-medium">{{ login.institution || login.provider_key }}</div>
-        <div class="text-xs text-surface-400">{{ login.username || login.label }}</div>
+        <div class="text-xs text-shiso-400">{{ login.username || login.label }}</div>
       </div>
       <Message :severity="sessionSeverity(session.status)" :closable="false">
         {{ session.message || 'Interactive auth is in progress.' }}
@@ -16,14 +16,14 @@
           fluid
           @keyup.enter="emit('submit', false)"
         />
-        <div v-if="session.prompt" class="text-xs text-surface-400">
+        <div v-if="session.prompt" class="text-xs text-shiso-400">
           {{ session.prompt }}
         </div>
       </div>
-      <div v-else-if="session.status === 'running' || session.status === 'starting'" class="text-sm text-surface-300">
+      <div v-else-if="session.status === 'running' || session.status === 'starting'" class="text-sm text-shiso-300">
         Keep the browser window open. The agent will pause here again if it needs a code or answer from you.
       </div>
-      <div v-else-if="session.status === 'skipped'" class="text-sm text-surface-300">
+      <div v-else-if="session.status === 'skipped'" class="text-sm text-shiso-300">
         This auth attempt was skipped. The login will stay in the attention list so you can retry later.
       </div>
     </div>

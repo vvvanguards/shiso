@@ -11,9 +11,6 @@ Shiso is a local-first personal automation platform. It uses AI-powered browser 
 ```bash
 uv sync                              # Install dependencies
 uv run shiso --help                  # CLI help
-uv run shiso start                   # Start all services (API + worker + frontend)
-uv run shiso start --no-frontend     # Start API + worker only
-uv run shiso stop                    # Stop all services
 uv run shiso scrape                  # Run all scrapers (auto mode)
 uv run shiso scrape amex -i          # Run one provider (interactive, pauses for 2FA)
 uv run shiso chrome                  # Launch Chrome automation profile
@@ -21,6 +18,12 @@ uv run shiso providers               # List configured providers
 uv run shiso auth status             # Check auth status for all logins
 uv run shiso auth login amex -i      # Interactively log in
 uv run shiso tune amex               # Tune scraper hints for a provider
+
+# To run services in separate terminals:
+#   Terminal 1: uv run uvicorn shiso.dashboard.main:app --reload --port 8002   # API
+#   Terminal 2: uv run python -m shiso.scraper.worker                          # Worker
+#   Terminal 3: cd shiso/dashboard/frontend && npm run dev                     # Frontend
+
 uv run pytest                        # Run tests
 uv run ruff check shiso              # Lint
 uv run mypy shiso                    # Type check

@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-import signal
-import subprocess
 import sys
-from pathlib import Path
 from typing import Optional
 
 import typer
@@ -20,33 +17,6 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
-
-PID_FILE = Path("data/.shiso_pids")
-
-
-def _save_pid(name: str, pid: int) -> None:
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with PID_FILE.open("a") as f:
-        f.write(f"{name}:{pid}\n")
-
-
-def _load_pids() -> list[tuple[str, int]]:
-    if not PID_FILE.exists():
-        return []
-    entries = []
-    for line in PID_FILE.read_text().splitlines():
-        if ":" in line:
-            name, pid_str = line.rsplit(":", 1)
-            try:
-                entries.append((name, int(pid_str)))
-            except ValueError:
-                pass
-    return entries
-
-
-def _clear_pids() -> None:
-    if PID_FILE.exists():
-        PID_FILE.unlink()
 
 
 # ---------------------------------------------------------------------------
@@ -172,105 +142,6 @@ def tune(
     sys.argv = ["shiso-tune", provider]
     from shiso.scraper.agent import smart_tune
     asyncio.run(smart_tune.main(provider))
-
-
-# ---------------------------------------------------------------------------
-# shiso start
-# ---------------------------------------------------------------------------
-
-@app.command()
-def start(
-    frontend: bool = typer.Option(True, "--frontend/--no-frontend", help="Start the frontend dev server"),
-) -> None:
-    """Start all shiso services (API, worker, frontend)."""
-    import time
-
-    _clear_pids()
-
-    # Start frontend
-    if frontend:
-        frontend_dir = Path("shiso/dashboard/frontend")
-        if frontend_dir.exists():
-            p = subprocess.Popen(
-                [sys.executable, "-m", "npm", "run", "dev"],
-                cwd=str(frontend_dir),
-            )
-            _save_pid("frontend", p.pid)
-            console.print("[green]Frontend[/green] started on port 5175")
-
-    # Start worker
-    p = subprocess.Popen(
-        [sys.executable, "-m", "shiso.scraper.worker"],
-    )
-    _save_pid("worker", p.pid)
-    console.print("[green]Worker[/green] started")
-
-    # Start API (block so we can Ctrl+C)
-    console.print("[green]API[/green] starting on port 8002...")
-    console.print("[dim]Press Ctrl+C to stop all services[/dim]")
-    try:
-        p = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "shiso.dashboard.main:app", "--reload", "--port", "8002"],
-        )
-        _save_pid("api", p.pid)
-        p.wait()
-    except KeyboardInterrupt:
-        stop(silent=False)
-
-
-# ---------------------------------------------------------------------------
-# shiso stop
-# ---------------------------------------------------------------------------
-
-@app.command()
-def stop(silent: bool = typer.Option(False, "--silent", "-s")) -> None:
-    """Stop all running shiso services."""
-    import psutil
-
-    stopped = 0
-
-    # Kill saved PIDs
-    for name, pid in _load_pids():
-        try:
-            proc = psutil.Process(pid)
-            proc.terminate()
-            proc.wait(timeout=3)
-            stopped += 1
-            if not silent:
-                console.print(f"Stopped {name} (PID {pid})")
-        except (psutil.NoSuchProcess, psutil.TimeoutExpired):
-            pass
-
-    # Kill uvicorn on port 8002
-    for conn in psutil.net_connections():
-        if conn.laddr.port == 8002 and conn.status == "LISTEN":
-            try:
-                proc = psutil.Process(conn.pid)
-                proc.terminate()
-                proc.wait(timeout=3)
-                stopped += 1
-                if not silent:
-                    console.print(f"Stopped API (PID {conn.pid})")
-            except (psutil.NoSuchProcess, psutil.TimeoutExpired):
-                pass
-
-    # Kill npm processes (frontend dev server)
-    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-        try:
-            if proc.info["name"] == "node" and proc.info["cmdline"]:
-                cmdline = " ".join(proc.info["cmdline"])
-                if "npm" in cmdline and "dev" in cmdline:
-                    proc.terminate()
-                    proc.wait(timeout=3)
-                    stopped += 1
-                    if not silent:
-                        console.print(f"Stopped frontend (PID {proc.info['pid']})")
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-
-    _clear_pids()
-    if not silent:
-        console.print(f"[green]Done[/green] - stopped {stopped} service(s)")
 
 
 def main():
