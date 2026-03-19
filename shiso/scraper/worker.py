@@ -83,7 +83,26 @@ async def execute_run(run_id: int) -> None:
         if login:
             login.last_sync_status = "running"
             login.last_sync_started_at = db_run.started_at
+            provider_key_for_session = login.provider_key
+        else:
+            provider_key_for_session = db_run.provider_key
         session.commit()
+
+    # Create agent session for human-in-the-loop via dashboard API
+    human_input_handler = None
+    complete_session = None
+    try:
+        from .agent_sessions import register_session, build_http_human_input_handler, complete_session_http, wait_for_api
+
+        if wait_for_api(timeout=15):
+            register_session(run_id, login_id, provider_key_for_session)
+            human_input_handler = build_http_human_input_handler(run_id)
+            complete_session = lambda status, message: complete_session_http(run_id, status=status, message=message)
+            logger.info("Dashboard API connected for run %d", run_id)
+        else:
+            logger.warning("Dashboard API not available, running without human-in-the-loop")
+    except Exception:
+        logger.debug("Agent sessions not available, running without human-in-the-loop", exc_info=True)
 
     # Resolve workflow from login's tool_key
     with SessionLocal() as session:
@@ -112,6 +131,11 @@ async def execute_run(run_id: int) -> None:
                 login.last_sync_error = db_run.error
                 login.last_sync_finished_at = db_run.finished_at
             session.commit()
+        if complete_session:
+            try:
+                complete_session("failed", "No account data found")
+            except Exception:
+                pass
         return
 
     provider_key = next(iter(accounts))
@@ -126,9 +150,20 @@ async def execute_run(run_id: int) -> None:
             run_id=run_id,
             account_filter=account_filter,
             workflow=workflow,
+            human_input_handler=human_input_handler,
         )
+        if complete_session:
+            try:
+                complete_session("completed", f"Sync completed for {provider_key}.")
+            except Exception:
+                pass
     except Exception:
         logger.exception("Sync run %d failed", run_id)
+        if complete_session:
+            try:
+                complete_session("failed", f"Sync run {run_id} failed.")
+            except Exception:
+                pass
 
 
 async def run_worker() -> None:

@@ -14,6 +14,8 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -32,6 +34,12 @@ app.add_middleware(
 )
 
 db = scraper.AccountsDB()
+
+
+@app.get("/api/health")
+def health():
+    """Health check endpoint for worker and monitoring."""
+    return {"status": "ok", "service": "dashboard", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 def _queue_sync_run(login_id: int, *, account_filter: str | None = None) -> int | None:
@@ -1064,6 +1072,275 @@ def respond_interactive_auth(login_id: int, req: InteractiveAuthRespondRequest):
         )
         session.response_event.set()
         return _interactive_auth_response(session)
+
+
+# ---------------------------------------------------------------------------
+# Agent Sessions — generalized human-in-the-loop for any running agent
+# ---------------------------------------------------------------------------
+
+@dataclass
+class AgentSessionState:
+    """Tracks a human-in-the-loop channel for a running sync/agent task."""
+    run_id: int
+    login_id: int
+    provider_key: str
+    status: str = "idle"  # idle | running | awaiting_input | completed | failed
+    message: str = ""
+    prompt: str | None = None
+    pending_response: str | None = None
+    response_event: threading.Event = field(default_factory=threading.Event)
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class AgentSessionResponse(BaseModel):
+    run_id: int
+    login_id: int
+    provider_key: Optional[str] = None
+    status: str
+    message: str
+    prompt: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class AgentSessionRespondRequest(BaseModel):
+    response: Optional[str] = None
+    skip: bool = False
+
+
+_agent_sessions: dict[int, AgentSessionState] = {}  # keyed by run_id
+_agent_sessions_lock = threading.Lock()
+
+
+def _agent_session_response(session: AgentSessionState) -> AgentSessionResponse:
+    return AgentSessionResponse(
+        run_id=session.run_id,
+        login_id=session.login_id,
+        provider_key=session.provider_key,
+        status=session.status,
+        message=session.message,
+        prompt=session.prompt,
+        updated_at=session.updated_at,
+    )
+
+
+def create_agent_session(run_id: int, login_id: int, provider_key: str) -> AgentSessionState:
+    """Create or retrieve an agent session for a sync run.
+
+    Called by the worker when starting a run so the dashboard can communicate
+    with the agent in real time.
+    """
+    with _agent_sessions_lock:
+        existing = _agent_sessions.get(run_id)
+        if existing:
+            return existing
+        session = AgentSessionState(
+            run_id=run_id,
+            login_id=login_id,
+            provider_key=provider_key,
+            status="running",
+            message=f"Sync running for {provider_key}.",
+        )
+        _agent_sessions[run_id] = session
+        return session
+
+
+def build_human_input_handler(run_id: int) -> Any:
+    """Build an async handler the scraper agent can call to request user help.
+
+    Returns an async callable that:
+    1. Sets the session status to awaiting_input with the agent's prompt
+    2. Waits for the user to respond via the API
+    3. Returns the user's response to the agent
+    """
+    import asyncio
+
+    async def handler(prompt: str) -> str:
+        while True:
+            with _agent_sessions_lock:
+                session = _agent_sessions.get(run_id)
+                if session is None:
+                    return "skip"
+                session.status = "awaiting_input"
+                session.message = "The agent needs your help to continue."
+                session.prompt = prompt
+                session.pending_response = None
+                session.response_event.clear()
+                session.updated_at = datetime.now(timezone.utc).isoformat()
+                wait_event = session.response_event
+
+            await asyncio.get_running_loop().run_in_executor(None, wait_event.wait)
+
+            with _agent_sessions_lock:
+                session = _agent_sessions.get(run_id)
+                if session is None:
+                    return "skip"
+                response = session.pending_response
+                session.pending_response = None
+                session.response_event.clear()
+                if response is None:
+                    continue
+                session.status = "running"
+                session.message = "Response received. Continuing."
+                session.prompt = None
+                session.updated_at = datetime.now(timezone.utc).isoformat()
+                return response
+
+    return handler
+
+
+def complete_agent_session(run_id: int, *, status: str = "completed", message: str = "") -> None:
+    """Mark an agent session as finished (called by the worker when a run ends)."""
+    with _agent_sessions_lock:
+        session = _agent_sessions.get(run_id)
+        if session:
+            session.status = status
+            session.message = message or f"Run {status}."
+            session.prompt = None
+            session.updated_at = datetime.now(timezone.utc).isoformat()
+
+
+@app.get("/api/agent-sessions", response_model=list[AgentSessionResponse])
+def list_agent_sessions():
+    """List all active (non-terminal) agent sessions."""
+    with _agent_sessions_lock:
+        return [
+            _agent_session_response(s)
+            for s in _agent_sessions.values()
+            if s.status not in ("completed", "failed", "idle")
+        ]
+
+
+@app.get("/api/agent-sessions/{run_id}", response_model=AgentSessionResponse)
+def get_agent_session(run_id: int):
+    """Get the status of an agent session by run_id."""
+    with _agent_sessions_lock:
+        session = _agent_sessions.get(run_id)
+        if not session:
+            return AgentSessionResponse(
+                run_id=run_id,
+                login_id=0,
+                status="idle",
+                message="No agent session for this run.",
+            )
+        return _agent_session_response(session)
+
+
+@app.post("/api/agent-sessions/{run_id}/respond", response_model=AgentSessionResponse)
+def respond_agent_session(run_id: int, req: AgentSessionRespondRequest):
+    """Send a response (or skip) to a waiting agent."""
+    with _agent_sessions_lock:
+        session = _agent_sessions.get(run_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="No agent session found")
+        if session.status != "awaiting_input":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Agent is not waiting for input (status: {session.status})",
+            )
+
+        response_text = "skip" if req.skip else str(req.response or "").strip()
+        if not response_text:
+            raise HTTPException(status_code=400, detail="A response is required unless you choose skip")
+
+        session.pending_response = response_text
+        session.status = "running"
+        session.message = "Response received. Continuing."
+        session.prompt = None
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        session.response_event.set()
+        return _agent_session_response(session)
+
+
+# --- Worker-facing endpoints (called by the worker process via HTTP) ---
+
+
+class AgentSessionCreateRequest(BaseModel):
+    run_id: int
+    login_id: int
+    provider_key: str
+
+
+class AgentSessionAwaitRequest(BaseModel):
+    prompt: str
+
+
+class AgentSessionCompleteRequest(BaseModel):
+    status: str = "completed"
+    message: str = ""
+
+
+class AgentSessionPollResponse(BaseModel):
+    response: str
+
+
+@app.post("/api/agent-sessions", response_model=AgentSessionResponse, status_code=201)
+def create_agent_session_endpoint(req: AgentSessionCreateRequest):
+    """Register a new agent session (called by the worker at run start)."""
+    session = create_agent_session(req.run_id, req.login_id, req.provider_key)
+    return _agent_session_response(session)
+
+
+@app.put("/api/agent-sessions/{run_id}/await", response_model=AgentSessionResponse)
+def set_agent_session_awaiting(run_id: int, req: AgentSessionAwaitRequest):
+    """Set a session to awaiting_input with a prompt (called by the worker)."""
+    with _agent_sessions_lock:
+        session = _agent_sessions.get(run_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="No agent session found")
+        session.status = "awaiting_input"
+        session.message = "The agent needs your help to continue."
+        session.prompt = req.prompt
+        session.pending_response = None
+        session.response_event.clear()
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return _agent_session_response(session)
+
+
+@app.get("/api/agent-sessions/{run_id}/poll-response")
+def poll_agent_session_response(run_id: int):
+    """Long-poll for a user response (called by the worker).
+
+    Blocks for up to 30 seconds. Returns 200 with response text when
+    the user responds, or 204 if no response yet.
+    """
+    with _agent_sessions_lock:
+        session = _agent_sessions.get(run_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="No agent session found")
+        wait_event = session.response_event
+
+    # Block up to 30s waiting for user response
+    got_response = wait_event.wait(timeout=30)
+
+    if not got_response:
+        return Response(status_code=204)
+
+    with _agent_sessions_lock:
+        session = _agent_sessions.get(run_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session gone")
+        response = session.pending_response
+        session.pending_response = None
+        session.response_event.clear()
+        if response is None:
+            return Response(status_code=204)
+        return JSONResponse({"response": response})
+
+
+@app.put("/api/agent-sessions/{run_id}/complete", response_model=AgentSessionResponse)
+def complete_agent_session_endpoint(run_id: int, req: AgentSessionCompleteRequest):
+    """Mark a session as completed/failed (called by the worker)."""
+    complete_agent_session(run_id, status=req.status, message=req.message)
+    with _agent_sessions_lock:
+        session = _agent_sessions.get(run_id)
+        if session:
+            return _agent_session_response(session)
+    return AgentSessionResponse(
+        run_id=run_id,
+        login_id=0,
+        status=req.status,
+        message=req.message,
+    )
 
 
 # ---------------------------------------------------------------------------
