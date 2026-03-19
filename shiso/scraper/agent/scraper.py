@@ -234,16 +234,28 @@ def _build_preamble(
     provider_key: str,
     provider_cfg: dict,
     dashboard_url: str | None,
+    needs_logout: bool = False,
 ) -> str:
     """Build the universal login/2FA/navigation preamble shared by all workflows."""
     institution = provider_cfg.get("institution", provider_key.replace("_", " ").title())
 
-    parts = [
+    parts = []
+    if needs_logout:
+        parts.append(
+            f"IMPORTANT: You may already be logged into {institution} as a different user. "
+            "Before doing anything else, find and click the Log Out / Sign Out link. "
+            "Look in the account menu, profile dropdown, or page footer. "
+            "Wait for the logout to complete before proceeding."
+        )
+
+    parts.extend([
         f"Go to the {institution} website.",
-        "If you need to log in, the username is x_username and the password is x_password.",
+        "Log in with username x_username and password x_password. "
+        "If you are already logged in, verify the account matches x_username. "
+        "If it does not match (different name, email, or account), log out first and then log in with the correct credentials.",
         "If you encounter a 2FA prompt, verification code screen, CAPTCHA, or any security "
         "challenge you cannot complete yourself, call the pause_for_human action and wait.",
-    ]
+    ])
 
     if dashboard_url:
         parts.append(f"After logging in, navigate to {dashboard_url}.")
@@ -257,6 +269,7 @@ def _build_task(
     dashboard_url: str | None,
     workflow: Workflow,
     extraction_prompt: str,
+    needs_logout: bool = False,
 ) -> str:
     """Build the full Agent task with the workflow instructions last.
 
@@ -264,7 +277,7 @@ def _build_task(
     contract. Keeping the workflow prompt last prevents stale provider notes
     from overriding pass-specific rules like "stay on the overview page".
     """
-    preamble = _build_preamble(provider_key, provider_cfg, dashboard_url)
+    preamble = _build_preamble(provider_key, provider_cfg, dashboard_url, needs_logout=needs_logout)
 
     parts = [preamble]
     if extraction_prompt:
@@ -1053,6 +1066,7 @@ async def scrape_provider(
         start_url: str = ""
         dashboard_url: str | None = str(provider_cfg.get("dashboard_url") or "").strip() or None
 
+        logins_completed = 0
         for login in logins:
             login_id = login.get("id")
             label = login.get("label", provider_key)
@@ -1085,6 +1099,7 @@ async def scrape_provider(
                 dashboard_url,
                 active_wf,
                 playbook.extraction_context(),
+                needs_logout=logins_completed > 0,
             )
 
             tools = _build_tools(interactive=interactive)
@@ -1188,6 +1203,7 @@ async def scrape_provider(
 
                 # Mark login as authenticated
                 _update_auth_status(login_id, "authenticated")
+                logins_completed += 1
 
             except _HumanPauseSkipped:
                 _update_auth_status(login_id, "needs_2fa")
