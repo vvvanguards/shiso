@@ -15,11 +15,11 @@ start:
 
 # Worker only
 worker:
-    uv run python -m shiso.scraper.worker
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "uv run python -m shiso.scraper.worker"
 
 # Frontend only (needs API running on port 8002)
 frontend:
-    cd shiso/dashboard/frontend; npm run dev
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd shiso/dashboard/frontend; npm run dev"
 
 # Sync all providers (run scrapers in auto mode)
 sync:
