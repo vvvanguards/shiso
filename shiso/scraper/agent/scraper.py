@@ -147,7 +147,6 @@ class ScrapeResult:
     agent_log_path: str | None = None
 
 
-@dataclass
 class AuthAssessment(BaseModel):
     """Structured assessment of an agent run outcome."""
     status: Literal["authenticated", "needs_2fa", "login_failed", "blocked"] = "authenticated"
@@ -485,15 +484,22 @@ class _HumanPauseSkipped(Exception):
     """Raised when pause_for_human is called in auto mode to abort the agent."""
 
 
-def _build_tools(*, interactive: bool = False) -> Any:
+def _build_tools(
+    *,
+    interactive: bool = False,
+    human_input_handler: Callable[[str], Any] | None = None,
+) -> Any:
     """Build a Tools instance with a custom pause_for_human action.
 
     The agent calls this action when it encounters a 2FA/verification screen,
     CAPTCHA, or anything else it can't handle alone. The agent decides when
     to use it — no hardcoded keyword matching needed.
 
-    In interactive mode, blocks for human input. In auto mode, raises
-    _HumanPauseSkipped so the caller can flag the login and move on.
+    Modes:
+    - human_input_handler provided: sends prompt to handler, awaits response
+      (used by dashboard for live human-in-the-loop)
+    - interactive=True: blocks for terminal input
+    - neither: raises _HumanPauseSkipped so the caller can flag and move on
     """
     import asyncio
     from browser_use import Tools
@@ -501,12 +507,22 @@ def _build_tools(*, interactive: bool = False) -> Any:
     tools = Tools()
 
     @tools.action(
-        "Pause and wait for the human to intervene. Use this when you encounter "
-        "a 2FA / verification code prompt, CAPTCHA, security challenge, or any "
-        "screen that requires human input you cannot provide. The browser stays "
-        "open — the human will complete the action, then press Enter to resume.",
+        "Request human help. Use this when you encounter a 2FA / verification "
+        "code prompt, CAPTCHA, security challenge, unexpected page, or any "
+        "situation where you need human guidance. Provide a clear prompt "
+        "describing what you need.",
     )
-    async def pause_for_human():
+    async def request_human_help(prompt: str = "I need your help to continue. Please check the browser."):
+        prompt_text = str(prompt or "I need your help to continue.").strip()
+
+        if human_input_handler is not None:
+            logger.info("Agent requesting human help via handler: %s", prompt_text)
+            response = await human_input_handler(prompt_text)
+            response = str(response or "").strip()
+            if response.lower() in {"s", "skip"}:
+                raise _HumanPauseSkipped("Skipped by user")
+            return ActionResult(extracted_content=f"Human response: {response}")
+
         if not interactive:
             logger.warning("Agent requested human intervention in auto mode — skipping")
             raise _HumanPauseSkipped("2FA/verification required")
@@ -514,15 +530,15 @@ def _build_tools(*, interactive: bool = False) -> Any:
         logger.warning("Agent requested human intervention — pausing")
         print(f"\n{'='*60}")
         print(f"  HUMAN INPUT NEEDED")
-        print(f"  Complete the action in the browser window,")
-        print(f"  then press Enter here to continue.")
+        print(f"  {prompt_text}")
         print(f"{'='*60}")
-        # Run blocking input() in a thread so we don't block the event loop
-        await asyncio.get_event_loop().run_in_executor(
-            None, input, ">>> Press Enter when done... "
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, input, ">>> Enter response (or 's' to skip): "
         )
-        logger.info("Human confirmed — resuming agent")
-        return ActionResult(extracted_content="Human completed the action. Continue with the task.")
+        if result.strip().lower() == "s":
+            raise _HumanPauseSkipped("Skipped by user")
+        logger.info("Human responded — resuming agent")
+        return ActionResult(extracted_content=f"Human response: {result.strip()}" if result.strip() else "Human completed the action. Continue with the task.")
 
     return tools
 
@@ -1010,6 +1026,7 @@ async def scrape_provider(
     on_log: Callable[[str], None] | None = None,
     workflow: Workflow | None = None,
     run_id: int | None = None,
+    human_input_handler: Callable[[str], Any] | None = None,
 ) -> ScrapeResult:
     """Scrape one provider using browser-use Agent.
 
@@ -1102,7 +1119,7 @@ async def scrape_provider(
                 playbook.extraction_context(),
             )
 
-            tools = _build_tools(interactive=interactive)
+            tools = _build_tools(interactive=interactive, human_input_handler=human_input_handler)
 
             agent = Agent(
                 task=task,
