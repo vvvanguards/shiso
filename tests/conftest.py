@@ -25,7 +25,7 @@ def db_session():
         FinancialAccountType, PromoAprPeriod, ScraperLogin,
         ScraperLoginSyncRun,
     )
-    from shiso.scraper.models.tools import ToolRunOutput  # noqa: F401
+    from shiso.scraper.models.tools import ProviderPlaybookRecord, ToolRunOutput, WorkflowDefinitionRecord  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     TestSession = sessionmaker(bind=engine)

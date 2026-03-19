@@ -49,9 +49,12 @@ export async function deleteLogin(id) {
   return response.json()
 }
 
-export async function syncLogin(id) {
+export async function syncLogin(id, options = null) {
+  const hasOptions = options && Object.keys(options).length > 0
   const response = await fetch(`${API_BASE}/logins/${id}/sync`, {
     method: 'POST',
+    headers: hasOptions ? { 'Content-Type': 'application/json' } : undefined,
+    body: hasOptions ? JSON.stringify(options) : undefined,
   })
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
@@ -155,9 +158,77 @@ export async function fetchTools() {
   return response.json()
 }
 
+export async function fetchToolDefinition(toolKey) {
+  const response = await fetch(`${API_BASE}/tools/${toolKey}`)
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to fetch tool definition')
+  }
+  return response.json()
+}
+
+export async function draftToolDefinition(data) {
+  const response = await fetch(`${API_BASE}/tools/draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to draft tool definition')
+  }
+  return response.json()
+}
+
+export async function saveToolDefinition(toolKey, data) {
+  const response = await fetch(`${API_BASE}/tools/${toolKey}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to save tool definition')
+  }
+  return response.json()
+}
+
+export async function deleteToolDefinition(toolKey) {
+  const response = await fetch(`${API_BASE}/tools/${toolKey}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to delete tool definition')
+  }
+  return response.json()
+}
+
 export async function fetchToolRuns(toolKey) {
   const response = await fetch(`${API_BASE}/tools/${toolKey}/runs`)
   if (!response.ok) throw new Error('Failed to fetch tool runs')
+  return response.json()
+}
+
+export async function fetchWorkflowSuggestions(status = 'open', toolKey = null) {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (toolKey) params.set('tool_key', toolKey)
+  const response = await fetch(`${API_BASE}/tools/suggestions${params.toString() ? `?${params}` : ''}`)
+  if (!response.ok) throw new Error('Failed to fetch workflow suggestions')
+  return response.json()
+}
+
+export async function updateWorkflowSuggestionStatus(id, status) {
+  const response = await fetch(`${API_BASE}/tools/suggestions/${id}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to update workflow suggestion')
+  }
   return response.json()
 }
 
@@ -191,6 +262,28 @@ export async function startInteractiveAuth(loginId) {
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
     throw new Error(err.detail || 'Failed to start interactive auth')
+  }
+  return response.json()
+}
+
+export async function fetchInteractiveAuthStatus(loginId) {
+  const response = await fetch(`${API_BASE}/logins/${loginId}/interactive`)
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to fetch interactive auth status')
+  }
+  return response.json()
+}
+
+export async function respondInteractiveAuth(loginId, data) {
+  const response = await fetch(`${API_BASE}/logins/${loginId}/interactive/respond`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to send interactive auth response')
   }
   return response.json()
 }

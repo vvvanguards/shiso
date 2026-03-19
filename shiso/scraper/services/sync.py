@@ -13,10 +13,12 @@ from typing import Any, Callable
 
 from ..database import SessionLocal
 from ..models.accounts import ScraperLogin, ScraperLoginSyncRun
+from ..models.tools import ToolRunOutput
 from ..services.accounts_db import AccountsDB
 from ..agent.analyst import analyze_run
 from ..agent.llm import llm_chat
 from ..agent.scraper import scrape_provider
+from ..agent.workflow_drafts import capture_workflow_revision_suggestion
 
 logger = logging.getLogger(__name__)
 
@@ -167,8 +169,6 @@ async def run_sync(
 
         # Route persistence: non-financial workflows → ToolRunOutput; financial → AccountsDB
         if workflow and workflow.key != "financial_scraper":
-            from ..database import SessionLocal as _SL
-            from ..models.tools import ToolRunOutput
             login_id = logins[0].get("id") if logins else None
             output = ToolRunOutput(
                 tool_key=workflow.key,
@@ -178,7 +178,7 @@ async def run_sync(
                 output_json={workflow.result_key: [r for r in results]},
                 items_count=len(results),
             )
-            with _SL() as session:
+            with SessionLocal() as session:
                 session.add(output)
                 session.commit()
             sync.persisted = results
@@ -202,6 +202,23 @@ async def run_sync(
                 on_log(f"[{provider_key}] Analyst saved {n} hint(s)")
         except Exception as exc:
             logger.warning("Analyst failed for %s: %s", provider_key, exc)
+
+    if workflow:
+        try:
+            suggestion = await capture_workflow_revision_suggestion(
+                provider_key,
+                workflow=workflow,
+                sync_run_id=sync.run_id,
+                metrics=sync.metrics,
+                results=sync.results,
+                error=sync.error,
+                log_lines=sync.logs,
+                llm_chat_fn=llm_chat,
+            )
+            if suggestion and on_log:
+                on_log(f"[{provider_key}] Analyst drafted workflow revision suggestion for {workflow.key}")
+        except Exception as exc:
+            logger.warning("Workflow analyst failed for %s/%s: %s", provider_key, getattr(workflow, "key", "?"), exc)
 
     finalize_sync_run(sync)
     return sync

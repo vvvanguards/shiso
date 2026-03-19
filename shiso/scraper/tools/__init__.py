@@ -2,9 +2,11 @@
 
 from .workflows import (
     Workflow,
+    delete_workflow_definition,
     get_workflow,
     list_workflows,
     register,
+    save_workflow_definition,
     # Schemas re-exported for convenience
     AccountOutput,
     AccountListOutput,
@@ -14,6 +16,8 @@ from .workflows import (
 
 __all__ = [
     "Workflow",
+    "save_workflow_definition",
+    "delete_workflow_definition",
     "get_workflow",
     "list_workflows",
     "register",

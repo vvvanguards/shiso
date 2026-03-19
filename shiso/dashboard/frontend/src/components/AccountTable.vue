@@ -30,6 +30,33 @@
     <!-- Extra columns injected by parent -->
     <slot />
 
+    <Column v-if="showActions" header="" style="width: 6rem">
+      <template #body="{ data }">
+        <div class="flex justify-end gap-1">
+          <Button
+            icon="pi pi-sync"
+            severity="success"
+            text
+            rounded
+            size="small"
+            :disabled="!canSync(data)"
+            v-tooltip.top="'Sync linked login'"
+            @click="emit('sync', data)"
+          />
+          <Button
+            icon="pi pi-pencil"
+            severity="secondary"
+            text
+            rounded
+            size="small"
+            :disabled="!canEdit(data)"
+            v-tooltip.top="'Edit linked login'"
+            @click="emit('edit', data)"
+          />
+        </div>
+      </template>
+    </Column>
+
     <Column field="captured_at" header="Updated" sortable>
       <template #body="{ data }">
         <span class="text-surface-400 text-xs">{{ relativeTime(data.captured_at) }}</span>
@@ -43,20 +70,36 @@
 </template>
 
 <script setup>
+import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import Tag from 'primevue/tag'
 import { money, relativeTime, typeSeverity } from '../helpers.js'
 
-defineProps({
+const props = defineProps({
   rows: { type: Array, required: true },
   sortField: { type: String, default: 'current_balance' },
   sortOrder: { type: Number, default: -1 },
   balanceColor: { type: String, default: 'text-amber-400' },
   emptyMessage: { type: String, default: 'No accounts found.' },
+  showActions: { type: Boolean, default: false },
+  canSyncRow: { type: Function, default: null },
+  canEditRow: { type: Function, default: null },
 })
+
+const emit = defineEmits(['sync', 'edit'])
 
 const filtersModel = defineModel('filters', { type: Object, required: true })
 
 const globalFilterFields = ['display_name', 'institution', 'provider_key', 'account_subcategory', 'address']
+
+function canSync(row) {
+  if (props.canSyncRow) return !!props.canSyncRow(row)
+  return !!row.scraper_login_id
+}
+
+function canEdit(row) {
+  if (props.canEditRow) return !!props.canEditRow(row)
+  return !!row.scraper_login_id
+}
 </script>

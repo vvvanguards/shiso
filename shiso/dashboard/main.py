@@ -5,14 +5,16 @@ The API only reads/writes to the database. Sync runs are queued as DB rows
 and processed by the standalone worker (shiso.scraper.worker).
 """
 
-from datetime import datetime
-from typing import Optional
-
+import asyncio
 import logging
+import threading
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 import shiso.scraper.api as scraper
@@ -32,8 +34,9 @@ app.add_middleware(
 db = scraper.AccountsDB()
 
 
-def _queue_sync_run(login_id: int) -> int | None:
+def _queue_sync_run(login_id: int, *, account_filter: str | None = None) -> int | None:
     """Create a sync run record with status=queued. Returns None if already queued/running."""
+    normalized_filter = str(account_filter or "").strip() or None
     with scraper.SessionLocal() as session:
         login = session.get(scraper.ScraperLogin, login_id)
         if not login:
@@ -57,6 +60,7 @@ def _queue_sync_run(login_id: int) -> int | None:
         run = scraper.ScraperLoginSyncRun(
             scraper_login_id=login.id,
             provider_key=login.provider_key,
+            account_filter=normalized_filter,
             status="queued",
             started_at=datetime.utcnow(),
         )
@@ -69,6 +73,7 @@ def _queue_sync_run(login_id: int) -> int | None:
 class SnapshotResponse(BaseModel):
     provider_key: str
     institution: str
+    scraper_login_id: Optional[int] = None
     display_name: Optional[str] = None
     account_number: Optional[str] = None
     account_mask: Optional[str] = None
@@ -107,7 +112,7 @@ def get_accounts() -> DashboardResponse:
         snapshots=[SnapshotResponse(**row.__dict__) for row in snapshots],
         summary=db.get_summary(),
         available_scrapers=sorted(scraper.PROVIDER_KEYS),
-        generated_at=datetime.utcnow().isoformat(),
+        generated_at=datetime.now(timezone.utc).isoformat(),
     )
 
 
@@ -157,6 +162,7 @@ class LoginSyncRunResponse(BaseModel):
     id: int
     scraper_login_id: int
     provider_key: str
+    account_filter: Optional[str] = None
     status: str
     started_at: str
     finished_at: Optional[str] = None
@@ -169,6 +175,7 @@ class LoginSyncRunResponse(BaseModel):
 class LoginSyncStartResponse(BaseModel):
     run_id: int
     status: str
+    account_filter: Optional[str] = None
 
 
 def _login_to_response(login: scraper.ScraperLogin) -> LoginResponse:
@@ -202,6 +209,7 @@ def _sync_run_to_response(run: scraper.ScraperLoginSyncRun) -> LoginSyncRunRespo
         id=run.id,
         scraper_login_id=run.scraper_login_id,
         provider_key=run.provider_key,
+        account_filter=run.account_filter,
         status=run.status,
         started_at=run.started_at.isoformat(),
         finished_at=run.finished_at.isoformat() if run.finished_at else None,
@@ -341,6 +349,10 @@ class LoginSyncRequest(BaseModel):
     login_ids: Optional[list[int]] = None
 
 
+class SingleLoginSyncRequest(BaseModel):
+    account_filter: Optional[str] = None
+
+
 @app.post("/api/logins/import")
 async def import_logins(file: UploadFile, selected: str = "", overwrite: str = ""):
     """Import selected rows from a Chrome passwords CSV.
@@ -411,11 +423,12 @@ async def import_logins(file: UploadFile, selected: str = "", overwrite: str = "
 
 
 @app.post("/api/logins/{login_id}/sync", response_model=LoginSyncStartResponse)
-def sync_login(login_id: int):
-    run_id = _queue_sync_run(login_id)
+def sync_login(login_id: int, req: SingleLoginSyncRequest | None = None):
+    account_filter = req.account_filter if req else None
+    run_id = _queue_sync_run(login_id, account_filter=account_filter)
     if run_id is None:
-        return LoginSyncStartResponse(run_id=0, status="already_queued")
-    return LoginSyncStartResponse(run_id=run_id, status="queued")
+        return LoginSyncStartResponse(run_id=0, status="already_queued", account_filter=account_filter)
+    return LoginSyncStartResponse(run_id=run_id, status="queued", account_filter=account_filter)
 
 
 @app.post("/api/logins/sync")
@@ -645,9 +658,161 @@ def list_accounts_simple():
 def list_registered_tools():
     """List all registered workflows (exposed as tools for API compatibility)."""
     return [
-        {"tool_key": w.key, "display_name": w.name, "description": w.description}
+        {
+            "tool_key": w.key,
+            "display_name": w.name,
+            "description": w.description,
+            "result_key": w.result_key,
+            "source": getattr(w, "source", "memory"),
+        }
         for w in scraper.list_workflows()
     ]
+
+
+class WorkflowFieldSpec(BaseModel):
+    name: str
+    type: str
+    nullable: bool = False
+    default: Any | None = None
+
+
+class WorkflowDefinitionBase(BaseModel):
+    name: str
+    description: str = ""
+    prompt_template: str
+    result_key: str = "items"
+    output_schema_json: list[WorkflowFieldSpec]
+
+
+class WorkflowDefinitionResponse(WorkflowDefinitionBase):
+    key: str
+    source: str = "db"
+
+
+class WorkflowDraftRequest(BaseModel):
+    brief: str
+    example_items: list[dict[str, Any]] = Field(default_factory=list)
+    existing_key: Optional[str] = None
+
+
+class WorkflowDraftResponse(WorkflowDefinitionResponse):
+    rationale: Optional[str] = None
+
+
+class WorkflowSuggestionResponse(BaseModel):
+    id: int
+    tool_key: str
+    provider_key: str
+    sync_run_id: Optional[int] = None
+    status: str
+    trigger_reason: str
+    rationale: Optional[str] = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    suggested_definition: WorkflowDraftResponse
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class WorkflowSuggestionStatusRequest(BaseModel):
+    status: str
+
+
+def _workflow_to_response(workflow) -> WorkflowDefinitionResponse:
+    return WorkflowDefinitionResponse(
+        key=workflow.key,
+        name=workflow.name,
+        description=workflow.description,
+        prompt_template=workflow.prompt_template,
+        result_key=workflow.result_key,
+        output_schema_json=[WorkflowFieldSpec(**field) for field in (workflow.schema_spec or [])],
+        source=getattr(workflow, "source", "memory"),
+    )
+
+
+def _draft_to_response(draft: dict[str, Any]) -> WorkflowDraftResponse:
+    return WorkflowDraftResponse(
+        key=draft["key"],
+        name=draft["name"],
+        description=draft["description"],
+        prompt_template=draft["prompt_template"],
+        result_key=draft["result_key"],
+        output_schema_json=[WorkflowFieldSpec(**field) for field in draft["output_schema_json"]],
+        source="draft",
+        rationale=draft.get("rationale"),
+    )
+
+
+def _workflow_suggestion_to_response(suggestion) -> WorkflowSuggestionResponse:
+    return WorkflowSuggestionResponse(
+        id=suggestion.id,
+        tool_key=suggestion.tool_key,
+        provider_key=suggestion.provider_key,
+        sync_run_id=suggestion.sync_run_id,
+        status=suggestion.status,
+        trigger_reason=suggestion.trigger_reason,
+        rationale=suggestion.rationale,
+        metrics=suggestion.metrics or {},
+        suggested_definition=_draft_to_response(suggestion.suggested_definition),
+        created_at=suggestion.created_at,
+        updated_at=suggestion.updated_at,
+    )
+
+
+@app.get("/api/tools/suggestions", response_model=list[WorkflowSuggestionResponse])
+def list_tool_suggestions(status: Optional[str] = "open", tool_key: Optional[str] = None):
+    suggestions = scraper.list_workflow_revision_suggestions(status=status, tool_key=tool_key)
+    return [_workflow_suggestion_to_response(suggestion) for suggestion in suggestions]
+
+
+@app.post("/api/tools/suggestions/{suggestion_id}/status", response_model=WorkflowSuggestionResponse)
+def update_tool_suggestion_status(suggestion_id: int, req: WorkflowSuggestionStatusRequest):
+    try:
+        suggestion = scraper.update_workflow_revision_suggestion_status(suggestion_id, req.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not suggestion:
+        raise HTTPException(status_code=404, detail="Workflow suggestion not found")
+    return _workflow_suggestion_to_response(suggestion)
+
+
+@app.get("/api/tools/{tool_key}", response_model=WorkflowDefinitionResponse)
+def get_tool_definition(tool_key: str):
+    workflow = scraper.get_workflow(tool_key)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    return _workflow_to_response(workflow)
+
+
+@app.post("/api/tools/draft", response_model=WorkflowDraftResponse)
+async def draft_tool_definition(req: WorkflowDraftRequest):
+    existing_workflow = scraper.get_workflow(req.existing_key) if req.existing_key else None
+    draft = await scraper.draft_workflow_definition(
+        req.brief,
+        example_items=req.example_items,
+        existing_workflow=existing_workflow,
+    )
+    if not draft:
+        raise HTTPException(status_code=502, detail="Failed to draft tool definition")
+    return _draft_to_response(draft)
+
+
+@app.put("/api/tools/{tool_key}", response_model=WorkflowDefinitionResponse)
+def save_tool_definition(tool_key: str, data: WorkflowDefinitionBase):
+    workflow = scraper.save_workflow_definition(
+        tool_key,
+        name=data.name,
+        description=data.description,
+        prompt_template=data.prompt_template,
+        result_key=data.result_key,
+        output_schema_json=[field.model_dump(exclude_none=False) for field in data.output_schema_json],
+    )
+    return _workflow_to_response(workflow)
+
+
+@app.delete("/api/tools/{tool_key}")
+def delete_tool_definition(tool_key: str):
+    deleted = scraper.delete_workflow_definition(tool_key)
+    return {"ok": deleted}
 
 
 @app.get("/api/tools/{tool_key}/runs")
@@ -680,22 +845,126 @@ def list_tool_runs(tool_key: str, limit: int = 20):
 # Interactive Auth
 # ---------------------------------------------------------------------------
 
-import subprocess
-import sys
-import threading
-from pathlib import Path
+@dataclass
+class InteractiveAuthSessionState:
+    login_id: int
+    provider_key: str
+    status: str = "idle"
+    message: str = ""
+    prompt: str | None = None
+    pending_response: str | None = None
+    response_event: threading.Event = field(default_factory=threading.Event)
+    thread: threading.Thread | None = None
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
-# Track running interactive auth sessions (thread-safe)
-_interactive_auth_sessions: dict[int, subprocess.Popen] = {}
+
+class InteractiveAuthStatusResponse(BaseModel):
+    login_id: int
+    provider_key: Optional[str] = None
+    status: str
+    message: str
+    prompt: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class InteractiveAuthRespondRequest(BaseModel):
+    response: Optional[str] = None
+    skip: bool = False
+
+
+_interactive_auth_sessions: dict[int, InteractiveAuthSessionState] = {}
 _interactive_auth_lock = threading.Lock()
+_INTERACTIVE_AUTH_TERMINAL_STATUSES = {"completed", "failed", "skipped"}
 
 
-def _cleanup_old_process(login_id: int) -> None:
-    """Clean up a finished process from memory."""
-    if login_id in _interactive_auth_sessions:
-        proc = _interactive_auth_sessions[login_id]
-        if proc.poll() is not None:
-            del _interactive_auth_sessions[login_id]
+def _interactive_auth_response(session: InteractiveAuthSessionState) -> InteractiveAuthStatusResponse:
+    return InteractiveAuthStatusResponse(
+        login_id=session.login_id,
+        provider_key=session.provider_key,
+        status=session.status,
+        message=session.message,
+        prompt=session.prompt,
+        updated_at=session.updated_at,
+    )
+
+
+def _set_interactive_auth_state(
+    session: InteractiveAuthSessionState,
+    *,
+    status: str | None = None,
+    message: str | None = None,
+    prompt: str | None = None,
+) -> None:
+    if status is not None:
+        session.status = status
+    if message is not None:
+        session.message = message
+    session.prompt = prompt
+    session.updated_at = datetime.now(timezone.utc).isoformat()
+
+
+def _run_interactive_auth_session(login_id: int) -> None:
+    from shiso.scraper.agent import auth as auth_module
+
+    async def _wait_for_human_response(prompt: str) -> str:
+        while True:
+            with _interactive_auth_lock:
+                session = _interactive_auth_sessions.get(login_id)
+                if session is None:
+                    return "skip"
+                _set_interactive_auth_state(
+                    session,
+                    status="awaiting_input",
+                    message="The agent needs your help to continue authentication.",
+                    prompt=prompt,
+                )
+                session.pending_response = None
+                session.response_event.clear()
+                wait_event = session.response_event
+
+            await asyncio.get_running_loop().run_in_executor(None, wait_event.wait)
+
+            with _interactive_auth_lock:
+                session = _interactive_auth_sessions.get(login_id)
+                if session is None:
+                    return "skip"
+                response = session.pending_response
+                session.pending_response = None
+                session.response_event.clear()
+                if response is None:
+                    continue
+                return response
+
+    def _status_callback(status: str, message: str) -> None:
+        with _interactive_auth_lock:
+            session = _interactive_auth_sessions.get(login_id)
+            if session is None:
+                return
+            prompt = session.prompt if status == "awaiting_input" else None
+            _set_interactive_auth_state(session, status=status, message=message, prompt=prompt)
+
+    try:
+        result = asyncio.run(
+            auth_module.interactive_auth_login(
+                login_id,
+                human_input_handler=_wait_for_human_response,
+                status_callback=_status_callback,
+            )
+        )
+    except Exception as exc:
+        logger.exception("Interactive auth session crashed for login %s", login_id)
+        result = {"status": "failed", "message": str(exc), "provider_key": None}
+
+    with _interactive_auth_lock:
+        session = _interactive_auth_sessions.get(login_id)
+        if session is None:
+            return
+        _set_interactive_auth_state(
+            session,
+            status=str(result.get("status") or "failed"),
+            message=str(result.get("message") or "Interactive auth finished."),
+            prompt=None,
+        )
 
 
 @app.get("/api/logins/problems")
@@ -711,13 +980,9 @@ def get_problem_logins():
         return [_login_to_response(l) for l in logins]
 
 
-@app.post("/api/logins/{login_id}/interactive")
+@app.post("/api/logins/{login_id}/interactive", response_model=InteractiveAuthStatusResponse)
 def start_interactive_auth(login_id: int):
-    """Start an interactive auth session for a login that needs 2FA or failed.
-
-    This spawns a browser-use agent to attempt login with human assistance for 2FA.
-    Returns immediately with a status; poll GET /api/logins/{login_id}/interactive for updates.
-    """
+    """Start or resume an interactive auth session for one login."""
     with scraper.SessionLocal() as session:
         login = session.get(scraper.ScraperLogin, login_id)
         if not login:
@@ -728,45 +993,65 @@ def start_interactive_auth(login_id: int):
         provider_key = login.provider_key
 
     with _interactive_auth_lock:
-        # Clean up any finished process for this login
-        _cleanup_old_process(login_id)
+        existing = _interactive_auth_sessions.get(login_id)
+        if existing and existing.status not in _INTERACTIVE_AUTH_TERMINAL_STATUSES:
+            return _interactive_auth_response(existing)
 
-        # Check if already running
-        if login_id in _interactive_auth_sessions:
-            return {"status": "running", "message": f"Interactive auth already in progress for {provider_key}"}
+        interactive_session = InteractiveAuthSessionState(
+            login_id=login_id,
+            provider_key=provider_key,
+            status="starting",
+            message=f"Starting interactive auth for {provider_key}. Check the browser window.",
+        )
+        thread = threading.Thread(
+            target=_run_interactive_auth_session,
+            args=(login_id,),
+            daemon=True,
+            name=f"interactive-auth-{login_id}",
+        )
+        interactive_session.thread = thread
+        _interactive_auth_sessions[login_id] = interactive_session
+        thread.start()
+        return _interactive_auth_response(interactive_session)
 
-        # Run the auth CLI as a subprocess (inherit stdout/stderr to avoid pipe deadlock)
-        try:
-            proc = subprocess.Popen(
-                [sys.executable, "-m", "shiso.scraper.agent.auth", "login", provider_key],
-                cwd=str(Path(__file__).parent.parent.parent),
-            )
-            _interactive_auth_sessions[login_id] = proc
-            return {"status": "started", "message": f"Interactive auth started for {provider_key}. Check browser window for login prompts."}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to start interactive auth: {str(e)}")
 
-
-@app.get("/api/logins/{login_id}/interactive")
+@app.get("/api/logins/{login_id}/interactive", response_model=InteractiveAuthStatusResponse)
 def get_interactive_auth_status(login_id: int):
     """Check if an interactive auth session is still running."""
     with _interactive_auth_lock:
-        if login_id not in _interactive_auth_sessions:
-            return {"status": "idle", "message": "No interactive auth session running"}
+        session = _interactive_auth_sessions.get(login_id)
+        if not session:
+            return InteractiveAuthStatusResponse(
+                login_id=login_id,
+                status="idle",
+                message="No interactive auth session running.",
+            )
+        return _interactive_auth_response(session)
 
-        proc = _interactive_auth_sessions[login_id]
-        poll_result = proc.poll()
 
-        if poll_result is None:
-            return {"status": "running", "message": "Interactive auth in progress. Check browser window."}
+@app.post("/api/logins/{login_id}/interactive/respond", response_model=InteractiveAuthStatusResponse)
+def respond_interactive_auth(login_id: int, req: InteractiveAuthRespondRequest):
+    """Relay a 2FA code, answer, or skip decision back to the interactive auth agent."""
+    with _interactive_auth_lock:
+        session = _interactive_auth_sessions.get(login_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="No interactive auth session found")
+        if session.status != "awaiting_input":
+            raise HTTPException(status_code=409, detail=f"Interactive auth is not waiting for input (status: {session.status})")
 
-        # Process finished - clean up
-        del _interactive_auth_sessions[login_id]
+        response_text = "skip" if req.skip else str(req.response or "").strip()
+        if not response_text:
+            raise HTTPException(status_code=400, detail="A response is required unless you choose skip")
 
-        if poll_result == 0:
-            return {"status": "completed", "message": "Interactive auth completed successfully. Refresh to see updated status."}
-        else:
-            return {"status": "failed", "message": f"Interactive auth exited with code {poll_result}"}
+        session.pending_response = response_text
+        _set_interactive_auth_state(
+            session,
+            status="running",
+            message="Response received. Continuing in the browser.",
+            prompt=None,
+        )
+        session.response_event.set()
+        return _interactive_auth_response(session)
 
 
 # ---------------------------------------------------------------------------
@@ -895,4 +1180,17 @@ scraper.init_db()
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("shiso.dashboard.main:app", host="0.0.0.0", port=8002, reload=True)
+    uvicorn.run(
+        "shiso.dashboard.main:app",
+        host="0.0.0.0",
+        port=8002,
+        reload=True,
+        reload_dirs=["shiso"],
+        reload_excludes=[
+            "tests/*",
+            "data/*",
+            ".venv/*",
+            "shiso/dashboard/frontend/node_modules/*",
+            "shiso/dashboard/frontend/dist/*",
+        ],
+    )

@@ -24,6 +24,13 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL = 3  # seconds
 
 
+def _worker_process_command() -> list[str]:
+    """Command used to launch the non-reloading worker subprocess."""
+    import sys
+
+    return [sys.executable, "-m", "shiso.scraper.worker"]
+
+
 def _cleanup_stale_runs() -> int:
     """Mark any 'running' sync runs as failed (leftover from crash/restart).
     
@@ -68,6 +75,7 @@ async def execute_run(run_id: int) -> None:
         if not db_run or db_run.status != "queued":
             return
         login_id = db_run.scraper_login_id
+        account_filter = db_run.account_filter
         db_run.status = "running"
         db_run.started_at = datetime.utcnow()
 
@@ -83,10 +91,13 @@ async def execute_run(run_id: int) -> None:
         tool_key = login_obj.tool_key if login_obj else "financial_scraper"
 
     workflow = None
+    download_statements = True
     if tool_key and tool_key != "financial_scraper":
         workflow = get_workflow(tool_key)
         if not workflow:
             logger.warning("Unknown tool_key '%s' for login %d, falling back to default", tool_key, login_id)
+        else:
+            download_statements = False
 
     accounts = load_accounts(login_ids=[login_id])
     if not accounts:
@@ -111,7 +122,9 @@ async def execute_run(run_id: int) -> None:
             provider_key,
             logins,
             accounts_db=AccountsDB(),
+            download_statements=download_statements,
             run_id=run_id,
+            account_filter=account_filter,
             workflow=workflow,
         )
     except Exception:
@@ -185,13 +198,40 @@ if __name__ == "__main__":
         import subprocess
         import sys
 
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         watch_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ignore_dirs = {
+            os.path.join(project_root, "tests"),
+            os.path.join(project_root, "data"),
+            os.path.join(project_root, ".git"),
+            os.path.join(project_root, ".venv"),
+            os.path.join(project_root, "shiso", "dashboard", "frontend", "node_modules"),
+            os.path.join(project_root, "shiso", "dashboard", "frontend", "dist"),
+        }
         logger.info("Watching %s for changes...", watch_dir)
         logger.info("Worker running in reload mode — will restart on file changes")
-
-        for changes in watch(watch_dir):
-            logger.info("Code changed, restarting worker...")
-            # Re-run this script with same args (minus --reload)
-            subprocess.run([sys.executable, "-m", "shiso.scraper.worker"])
+        worker_proc = subprocess.Popen(_worker_process_command())
+        try:
+            for changes in watch(watch_dir):
+                changed_paths = [str(change[1]) for change in changes]
+                if changed_paths and all(
+                    any(path.startswith(ignore_dir) for ignore_dir in ignore_dirs)
+                    for path in changed_paths
+                ):
+                    logger.info("Ignoring reload for non-worker changes")
+                    continue
+                logger.info("Code changed, restarting worker...")
+                worker_proc.terminate()
+                worker_proc.wait(timeout=10)
+                worker_proc = subprocess.Popen(_worker_process_command())
+        except KeyboardInterrupt:
+            logger.info("Stopping reload worker...")
+        finally:
+            if worker_proc.poll() is None:
+                worker_proc.terminate()
+                try:
+                    worker_proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    worker_proc.kill()
     else:
         asyncio.run(run_worker())

@@ -164,7 +164,7 @@ async def main(
         download_statements=download_statements,
         interactive=interactive,
         account_filter=account_filter,
-        on_log=lambda msg: print(msg),
+        on_log=lambda msg: print(msg.encode("ascii", errors="replace").decode("ascii")),
     )
 
     print("\n=== RESULTS ===")

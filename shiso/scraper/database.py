@@ -67,14 +67,21 @@ def _import_models() -> None:
         ScraperLogin,
         ScraperLoginSyncRun,
     )
-    from .models.tools import ToolRunOutput  # noqa: F401
+    from .models.tools import (  # noqa: F401
+        ProviderPlaybookRecord,
+        ToolRunOutput,
+        WorkflowDefinitionRecord,
+        WorkflowRevisionSuggestionRecord,
+    )
 
 
 def init_db() -> None:
     """Create tables if they don't exist and seed reference data."""
     _import_models()
     Base.metadata.create_all(bind=engine)
+    _apply_lightweight_schema_updates()
     _seed_account_types()
+    _seed_builtin_workflows()
 
 
 def reset_db() -> None:
@@ -83,6 +90,18 @@ def reset_db() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     _seed_account_types()
+    _seed_builtin_workflows()
+
+
+def _apply_lightweight_schema_updates() -> None:
+    """Apply simple ALTER TABLE updates while the schema is still evolving."""
+    with engine.begin() as conn:
+        sync_run_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(scraper_login_sync_runs)")).fetchall()
+        }
+        if "account_filter" not in sync_run_columns:
+            conn.execute(text("ALTER TABLE scraper_login_sync_runs ADD COLUMN account_filter TEXT"))
 
 
 def _seed_account_types() -> None:
@@ -98,3 +117,10 @@ def _seed_account_types() -> None:
             else:
                 session.add(FinancialAccountType(name=name, balance_type=balance_type))
         session.commit()
+
+
+def _seed_builtin_workflows() -> None:
+    """Ensure builtin workflow definitions exist in the database."""
+    from .tools.workflows import sync_builtin_workflows_to_db
+
+    sync_builtin_workflows_to_db()

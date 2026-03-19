@@ -14,7 +14,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from ..database import SessionLocal, init_db
 from ..models.accounts import ScraperLogin
@@ -100,8 +100,10 @@ def _build_auth_task(provider_key: str, provider_cfg: dict, entry: dict) -> str:
         f"Steps:\n"
         f"1. If there is a login form visible, fill in the username and password and submit.\n"
         f"2. If the site shows a 2FA/verification prompt (text code, email code, security question, "
-        f"push notification, etc.), call the pause_for_human tool so the human can complete it.\n"
-        f"3. After login is complete (you can see account info, dashboard, or a welcome message), "
+        f"push notification, etc.), call the request_human_assistance tool with a short prompt for what you need.\n"
+        f"3. If request_human_assistance returns a code or answer, use it on the current verification screen and continue.\n"
+        f"4. If request_human_assistance returns SKIPPED_BY_USER, stop immediately and skip this provider for now.\n"
+        f"5. After login is complete (you can see account info, dashboard, or a welcome message), "
         f"you are done.\n\n"
         f"Important:\n"
         f"- If the page looks like a mobile site, look for a 'Desktop site' or 'Full site' link.\n"
@@ -125,6 +127,144 @@ def _update_provider_auth(provider_key: str, status: str) -> int:
                 login.last_auth_at = datetime.utcnow()
         session.commit()
         return len(provider_logins)
+
+
+def _load_auth_entry(login_id: int) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Load config and one enabled login entry for interactive auth."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore[no-redef]
+
+    from ..services.crypto import decrypt
+
+    init_db()
+
+    config_path = Path(__file__).parent.parent / "config" / "scraper.toml"
+    with open(config_path, "rb") as f:
+        config = tomllib.load(f)
+
+    browser_cfg = config["browser"]
+    providers_cfg = config.get("providers", {})
+    agent_cfg = config.get("agent", {})
+
+    with SessionLocal() as session:
+        login = session.get(ScraperLogin, login_id)
+        if not login:
+            raise ValueError(f"Login {login_id} not found")
+        if not login.enabled:
+            raise ValueError(f"Login {login_id} is disabled")
+
+        entry: dict[str, Any] = {
+            "id": login.id,
+            "provider_key": login.provider_key,
+            "label": login.label,
+            "username": login.username or "",
+        }
+        if login.password_encrypted:
+            entry["password"] = decrypt(login.password_encrypted)
+        provider_cfg = providers_cfg.get(login.provider_key, {})
+        entry["start_url"] = provider_cfg.get("start_url", login.login_url or "")
+
+    return config, browser_cfg, providers_cfg, agent_cfg, entry
+
+
+async def interactive_auth_login(
+    login_id: int,
+    *,
+    human_input_handler: Callable[[str], Awaitable[str]],
+    status_callback: Callable[[str, str], None] | None = None,
+) -> dict[str, Any]:
+    """Run interactive auth for one login with a pluggable human-input handler."""
+    from browser_use import Agent, ActionResult, Tools
+    from browser_use.browser.session import BrowserSession
+
+    from .llm import load_config
+    from .scraper import _build_llm, _provider_cookie_domains
+
+    config, browser_cfg, providers_cfg, agent_cfg, entry = _load_auth_entry(login_id)
+
+    provider = entry["provider_key"]
+    provider_cfg = providers_cfg.get(provider, {})
+    url = entry.get("start_url") or ""
+    username = entry.get("username", "")
+    password = entry.get("password", "")
+
+    if not url:
+        raise ValueError(f"No login URL configured for {provider}")
+
+    def _notify(status: str, message: str) -> None:
+        if status_callback:
+            status_callback(status, message)
+
+    user_data_dir = Path(browser_cfg.get("user_data_dir", "data/browser-profile")).resolve()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+    cookie_domains = _provider_cookie_domains(config)
+
+    browser_session = BrowserSession(
+        user_data_dir=str(user_data_dir),
+        headless=False,
+        keep_alive=True,
+        cookie_whitelist_domains=cookie_domains,
+    )
+
+    _notify("running", f"Starting interactive auth for {provider}. Check the browser window.")
+    await browser_session.start()
+
+    try:
+        full_config = load_config()
+        full_config.update(config)
+        llm = _build_llm(full_config, agent_cfg=agent_cfg)
+        tools = Tools()
+
+        @tools.action(
+            "Request human help for a verification challenge. "
+            "Use this when you need a 2FA code, security answer, confirmation "
+            "that a push notification was approved, or when the user wants to skip for now."
+        )
+        async def request_human_assistance(prompt: str = "Enter the verification code or type skip."):
+            prompt_text = str(prompt or "Enter the verification code or type skip.").strip()
+            _notify("awaiting_input", prompt_text)
+            response = (await human_input_handler(prompt_text)).strip()
+            _notify("running", "Received your response. Continuing the login flow in the browser.")
+            if response.lower() in {"s", "skip"}:
+                return ActionResult(extracted_content="SKIPPED_BY_USER")
+            return ActionResult(extracted_content=f"Human response: {response}")
+
+        task = _build_auth_task(provider, provider_cfg, entry)
+        agent = Agent(
+            task=task,
+            llm=llm,
+            browser_session=browser_session,
+            tools=tools,
+            use_vision=True,
+            max_steps=15,
+            max_failures=3,
+            max_actions_per_step=1,
+            sensitive_data={"x_username": username, "x_password": password},
+            directly_open_url=url,
+        )
+
+        history = await agent.run()
+        final = history.final_result() or ""
+        if "SKIPPED_BY_USER" in final:
+            _update_provider_auth(provider, _STATUS_NEEDS_2FA)
+            message = f"Skipped {provider} for now. You can retry this login later."
+            _notify("skipped", message)
+            return {"status": "skipped", "message": message, "provider_key": provider}
+
+        count = _update_provider_auth(provider, _STATUS_AUTHENTICATED)
+        message = f"Marked {count} login(s) as authenticated for {provider}."
+        _notify("completed", message)
+        return {"status": "completed", "message": message, "provider_key": provider}
+    except Exception as exc:
+        logger.exception("Interactive auth failed for %s", provider)
+        _update_provider_auth(provider, "login_failed")
+        message = str(exc)
+        _notify("failed", message)
+        return {"status": "failed", "message": message, "provider_key": provider}
+    finally:
+        await browser_session.kill()
 
 
 async def auth_login(targets: list[str] | None = None) -> None:

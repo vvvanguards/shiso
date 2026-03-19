@@ -32,8 +32,7 @@ from browser_use.browser.session import BrowserSession
 from browser_use.llm import ChatOllama, ChatOpenAI, ChatOpenRouter
 from browser_use.llm.browser_use.chat import ChatBrowserUse
 
-from .analyst import load_provider_hints
-from .prompts import get_extraction_prompt
+from .playbooks import load_provider_playbook
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +115,8 @@ from dataclasses import dataclass, field
 class ScrapeMetrics:
     """Structured metrics from a scraper run — no log parsing needed."""
     accounts_found: int = 0
+    accounts_before_filter: int = 0
+    account_filter: str | None = None
     steps_taken: int = 0
     failed_actions: int = 0
     errors: list[str] = field(default_factory=list)
@@ -126,6 +127,8 @@ class ScrapeMetrics:
     def to_dict(self) -> dict[str, Any]:
         return {
             "accounts_found": self.accounts_found,
+            "accounts_before_filter": self.accounts_before_filter,
+            "account_filter": self.account_filter,
             "steps_taken": self.steps_taken,
             "failed_actions": self.failed_actions,
             "errors": self.errors,
@@ -227,22 +230,6 @@ def _build_llm(config: dict, *, agent_cfg: dict | None = None) -> Any:
     return ChatOpenAI(model=str(model), api_key=str(api_key) if api_key else None, base_url=base_url, timeout=timeout)
 
 
-def _format_hints(hints: dict[str, Any]) -> str:
-    """Format provider hints as text for extend_system_message."""
-    if not hints:
-        return ""
-
-    parts = ["## Provider Hints (from previous runs)\n"]
-    for category in ("navigation_tips", "effective_patterns", "failed_actions"):
-        items = hints.get(category, [])
-        if items:
-            parts.append(f"### {category.replace('_', ' ').title()}")
-            for item in items:
-                parts.append(f"- {item}")
-            parts.append("")
-    return "\n".join(parts)
-
-
 def _build_preamble(
     provider_key: str,
     provider_cfg: dict,
@@ -271,13 +258,18 @@ def _build_task(
     workflow: Workflow,
     extraction_prompt: str,
 ) -> str:
-    """Build the full Agent task: preamble + workflow prompt + extraction prompt."""
+    """Build the full Agent task with the workflow instructions last.
+
+    Provider playbooks add useful context, but the workflow owns the pass-level
+    contract. Keeping the workflow prompt last prevents stale provider notes
+    from overriding pass-specific rules like "stay on the overview page".
+    """
     preamble = _build_preamble(provider_key, provider_cfg, dashboard_url)
 
-    parts = [preamble, workflow.prompt_template]
+    parts = [preamble]
     if extraction_prompt:
         parts.append(extraction_prompt)
-
+    parts.append(workflow.prompt_template)
     return "\n\n".join(parts)
 
 
@@ -452,13 +444,15 @@ async def _on_step(agent: Agent, on_log: Callable[[str], None] | None) -> None:
 
     actions = agent.history.action_names() if agent.history else []
     last_action = actions[-1] if actions else "unknown"
+    last_action_ascii = last_action.encode("ascii", errors="replace").decode("ascii")
 
     if on_log:
-        on_log(f"Step {step_num}: action={last_action}")
+        on_log(f"Step {step_num}: action={last_action_ascii}")
 
     errors = agent.history.errors() if agent.history else []
     if errors and errors[-1] and on_log:
-        on_log(f"Step {step_num}: failed — {errors[-1]}")
+        err_msg = str(errors[-1]).encode("ascii", errors="replace").decode("ascii")
+        on_log(f"Step {step_num}: failed — {err_msg}")
 
     # Check agent memory for login failure — abort early instead of retrying
     if hasattr(agent, "state") and hasattr(agent.state, "memory"):
@@ -591,6 +585,7 @@ async def _download_statements(
     dashboard_url: str | None = None,
     start_url: str | None = None,
     on_log: Callable[[str], None] | None = None,
+    interactive: bool = False,
 ) -> list[dict[str, Any]]:
     """Download the latest statement PDF for each eligible account, one at a time."""
     stmt_cfg = config.get("statements", {})
@@ -897,8 +892,7 @@ async def scrape_provider(
             start_url = provider_cfg.get("start_url", login.get("login_url", ""))
             dashboard_url = str(provider_cfg.get("dashboard_url") or "").strip() or None
             account_type = login.get("account_type")
-            extraction_prompt = get_extraction_prompt(provider_key, account_type)
-            hints = load_provider_hints(provider_key)
+            playbook = load_provider_playbook(provider_key, account_type)
 
             if on_log:
                 on_log(f"[{provider_key}] Scraping as {label}...")
@@ -907,7 +901,13 @@ async def scrape_provider(
             from ..tools.workflows import get_workflow as _get_wf, FINANCIAL_WORKFLOW
             active_wf = workflow or _get_wf("financial_scraper") or FINANCIAL_WORKFLOW
             output_schema = active_wf.output_schema
-            task = _build_task(provider_key, provider_cfg, dashboard_url, active_wf, extraction_prompt)
+            task = _build_task(
+                provider_key,
+                provider_cfg,
+                dashboard_url,
+                active_wf,
+                playbook.extraction_context(),
+            )
 
             tools = _build_tools(interactive=interactive)
 
@@ -920,7 +920,7 @@ async def scrape_provider(
                 max_steps=agent_cfg.get("max_steps", 50),
                 max_failures=agent_cfg.get("max_failures", 3),
                 max_actions_per_step=agent_cfg.get("max_actions_per_step", 3),
-                extend_system_message=_format_hints(hints),
+                extend_system_message=playbook.system_message(),
                 output_model_schema=output_schema,
                 sensitive_data={"x_username": username, "x_password": password},
                 directly_open_url=start_url,
@@ -1012,7 +1012,26 @@ async def scrape_provider(
                 if on_log:
                     on_log(f"[{provider_key}] Error for {label}: {exc}")
 
+# --- Deduplicate accounts across all logins ---
+        if len(all_accounts) > 1:
+            deduped: dict[str, dict] = {}
+            for acct in all_accounts:
+                key = _account_key(acct)
+                match_key = _find_matching_key(deduped, acct)
+                if match_key:
+                    deduped[match_key] = _merge_account(deduped[match_key], acct)
+                elif key in deduped:
+                    deduped[key] = _merge_account(deduped[key], acct)
+                else:
+                    deduped[key] = acct
+            if len(deduped) < len(all_accounts):
+                if on_log:
+                    on_log(f"[{provider_key}] Deduplicated {len(all_accounts)} accounts to {len(deduped)}")
+                all_accounts[:] = list(deduped.values())
+
         # --- Apply account filter if specified ---
+        metrics.accounts_before_filter = len(all_accounts)
+        metrics.account_filter = account_filter
         if account_filter and all_accounts:
             filter_lower = account_filter.lower()
             filtered = []
@@ -1024,10 +1043,11 @@ async def scrape_provider(
             if filtered:
                 if on_log:
                     on_log(f"[{provider_key}] Filtered to {len(filtered)} account(s) matching '{account_filter}'")
-                all_accounts = filtered
+                all_accounts[:] = filtered
             else:
                 if on_log:
-                    on_log(f"[{provider_key}] No accounts match filter '{account_filter}', keeping all {len(all_accounts)}")
+                    on_log(f"[{provider_key}] No accounts match filter '{account_filter}', returning empty result")
+                all_accounts.clear()
 
         # --- Pass 1.5: enrich account details (promo APR, credit limit) ---
         if all_accounts:
@@ -1065,6 +1085,7 @@ async def scrape_provider(
                 dashboard_url=provider_cfg.get("dashboard_url"),
                 start_url=provider_cfg.get("start_url"),
                 on_log=on_log,
+                interactive=interactive,
             )
 
             # Parse downloaded PDFs and enrich accounts with statement data

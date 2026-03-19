@@ -9,6 +9,7 @@ import json
 from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.orm import sessionmaker
 
 from shiso.scraper.tools import (
     Workflow,
@@ -87,7 +88,8 @@ class TestFinancialWorkflow:
             "card_name", "account_mask", "current_balance", "statement_balance",
             "due_date", "minimum_payment", "last_payment_amount",
             "last_payment_date", "credit_limit", "interest_rate",
-            "account_type", "address",
+            "intro_apr_rate", "intro_apr_end_date", "regular_apr",
+            "promo_type", "account_type", "address",
         }
         assert set(AccountOutput.model_fields.keys()) == expected_fields
 
@@ -222,6 +224,134 @@ class TestToolRunOutput:
         assert output.items_count == 1
         assert output.output_json["leads"][0]["name"] == "Test Lead"
 
+    def test_create_workflow_definition_record(self, db_session):
+        from shiso.scraper.models.tools import WorkflowDefinitionRecord
+
+        workflow = WorkflowDefinitionRecord(
+            key="rent_roll",
+            name="Rent Roll",
+            description="Extract unit rent data",
+            prompt_template="Collect the unit rents.",
+            result_key="rows",
+            output_schema_json=[
+                {"name": "unit", "type": "str"},
+                {"name": "rent", "type": "float", "nullable": True},
+            ],
+        )
+        db_session.add(workflow)
+        db_session.commit()
+        db_session.refresh(workflow)
+
+        assert workflow.id is not None
+        assert workflow.key == "rent_roll"
+        assert workflow.result_key == "rows"
+
+
+class TestDbBackedWorkflows:
+    def test_sync_builtin_workflows_to_db(self, db_session, monkeypatch):
+        import shiso.scraper.tools.workflows as workflows_module
+        from shiso.scraper.models.tools import WorkflowDefinitionRecord
+
+        monkeypatch.setattr(workflows_module, "SessionLocal", sessionmaker(bind=db_session.get_bind()))
+        monkeypatch.setattr(workflows_module, "_BUILTIN_SYNC_ATTEMPTED", False)
+
+        workflows_module.sync_builtin_workflows_to_db()
+
+        keys = {row.key for row in db_session.query(WorkflowDefinitionRecord).all()}
+        assert "financial_scraper" in keys
+        assert "zillow_leads" in keys
+
+    def test_get_workflow_prefers_db_definition(self, db_session, monkeypatch):
+        import shiso.scraper.tools.workflows as workflows_module
+        from shiso.scraper.models.tools import WorkflowDefinitionRecord
+
+        db_session.add(
+            WorkflowDefinitionRecord(
+                key="zillow_leads",
+                name="Zillow Leads DB",
+                description="DB-backed Zillow workflow",
+                prompt_template="Use the DB-defined prompt.",
+                result_key="leads",
+                output_schema_json=[
+                    {"name": "name", "type": "str"},
+                    {"name": "email", "type": "str", "nullable": True},
+                ],
+            )
+        )
+        db_session.commit()
+
+        monkeypatch.setattr(workflows_module, "SessionLocal", sessionmaker(bind=db_session.get_bind()))
+        monkeypatch.setattr(workflows_module, "_BUILTIN_SYNC_ATTEMPTED", True)
+
+        workflow = workflows_module.get_workflow("zillow_leads")
+
+        assert workflow is not None
+        assert workflow.name == "Zillow Leads DB"
+        assert workflow.source == "db"
+        payload = workflow.output_schema(leads=[{"name": "Alice"}])
+        assert payload.model_dump()["leads"][0]["name"] == "Alice"
+
+    def test_list_workflows_includes_dynamic_db_workflow(self, db_session, monkeypatch):
+        import shiso.scraper.tools.workflows as workflows_module
+        from shiso.scraper.models.tools import WorkflowDefinitionRecord
+
+        db_session.add(
+            WorkflowDefinitionRecord(
+                key="rent_roll",
+                name="Rent Roll",
+                description="Collect rental pricing data",
+                prompt_template="Extract all units and rents.",
+                result_key="rows",
+                output_schema_json=[
+                    {"name": "unit", "type": "str"},
+                    {"name": "rent", "type": "float", "nullable": True},
+                ],
+            )
+        )
+        db_session.commit()
+
+        monkeypatch.setattr(workflows_module, "SessionLocal", sessionmaker(bind=db_session.get_bind()))
+        monkeypatch.setattr(workflows_module, "_BUILTIN_SYNC_ATTEMPTED", True)
+
+        workflows = workflows_module.list_workflows()
+        keys = {workflow.key for workflow in workflows}
+        rent_roll = next(workflow for workflow in workflows if workflow.key == "rent_roll")
+
+        assert "rent_roll" in keys
+        assert rent_roll.source == "db"
+        payload = rent_roll.output_schema(rows=[{"unit": "1A", "rent": 1200.0}])
+        assert payload.model_dump()["rows"][0]["unit"] == "1A"
+
+    def test_save_and_delete_workflow_definition(self, db_session, monkeypatch):
+        import shiso.scraper.tools.workflows as workflows_module
+        from shiso.scraper.models.tools import WorkflowDefinitionRecord
+
+        monkeypatch.setattr(workflows_module, "SessionLocal", sessionmaker(bind=db_session.get_bind()))
+        monkeypatch.setattr(workflows_module, "_BUILTIN_SYNC_ATTEMPTED", True)
+
+        workflow = workflows_module.save_workflow_definition(
+            "rent_roll",
+            name="Rent Roll",
+            description="Collect rental pricing data",
+            prompt_template="Extract all units and rents.",
+            result_key="rows",
+            output_schema_json=[
+                {"name": "unit", "type": "str"},
+                {"name": "rent", "type": "float", "nullable": True},
+            ],
+        )
+        persisted = db_session.query(WorkflowDefinitionRecord).filter_by(key="rent_roll").first()
+
+        assert workflow.key == "rent_roll"
+        assert workflow.source == "db"
+        assert persisted is not None
+
+        deleted = workflows_module.delete_workflow_definition("rent_roll")
+        persisted = db_session.query(WorkflowDefinitionRecord).filter_by(key="rent_roll").first()
+
+        assert deleted is True
+        assert persisted is None
+
 
 # ---------------------------------------------------------------------------
 # scrape_provider signature
@@ -299,6 +429,11 @@ class TestDashboardRoutes:
         paths = [r.path for r in app.routes if hasattr(r, "path")]
         assert "/api/tools" in paths
 
+    def test_tool_definition_endpoints_exist(self):
+        from shiso.dashboard.main import app
+        paths = [r.path for r in app.routes if hasattr(r, "path")]
+        assert "/api/tools/{tool_key}" in paths
+
     def test_tool_runs_endpoint_exists(self):
         from shiso.dashboard.main import app
         paths = [r.path for r in app.routes if hasattr(r, "path")]
@@ -368,7 +503,8 @@ class TestBuildTask:
         # Has preamble
         assert "Chase" in task
         assert "x_username" in task
-        # Has workflow prompt
-        assert "CRITICAL" in task
         # Has extraction prompt
         assert "Extra extraction prompt." in task
+        # Workflow prompt stays authoritative by appearing after provider context
+        assert "CRITICAL" in task
+        assert task.index("Extra extraction prompt.") < task.index("CRITICAL")

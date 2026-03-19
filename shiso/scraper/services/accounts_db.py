@@ -31,6 +31,7 @@ from ..models.accounts import (
 class SnapshotView:
     provider_key: str
     institution: str
+    scraper_login_id: int | None
     display_name: str | None
     account_number: str | None
     account_mask: str | None
@@ -125,6 +126,7 @@ class AccountsDB:
                     _snapshot_view_from_values(
                         provider_key=provider_key,
                         institution=institution,
+                        scraper_login_id=row.get("login_id"),
                         account=account,
                         row=row,
                         captured_at=captured_at,
@@ -328,6 +330,7 @@ class AccountsDB:
                 _snapshot_view_from_values(
                     provider_key=account.provider_key,
                     institution=account.institution,
+                    scraper_login_id=snapshot.scraper_login_id,
                     account=account,
                     row=snapshot.raw_extracted_json,
                     captured_at=snapshot.captured_at,
@@ -1078,6 +1081,7 @@ class AccountsDB:
 def _snapshot_view_from_values(
     provider_key: str,
     institution: str,
+    scraper_login_id: int | None,
     account: FinancialAccount,
     row: dict,
     captured_at: datetime,
@@ -1089,6 +1093,7 @@ def _snapshot_view_from_values(
     return SnapshotView(
         provider_key=provider_key,
         institution=institution,
+        scraper_login_id=scraper_login_id,
         display_name=row.get("card_name") or account.display_name,
         account_number=account.account_number,
         account_mask=account.account_mask,

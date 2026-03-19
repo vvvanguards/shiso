@@ -1,11 +1,10 @@
-"""Post-run log analyst — extracts per-provider lessons and persists them as hints."""
+"""Post-run log analyst — extracts per-provider lessons and updates playbooks."""
 
 from __future__ import annotations
 
 import json
 import logging
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,10 +14,11 @@ except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 import tomli_w
 
+from .playbooks import load_provider_playbook, save_provider_playbook_hints
+
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
-HINTS_PATH = CONFIG_DIR / "provider_hints.json"
 CONFIG_PATH = CONFIG_DIR / "scraper.toml"
 _PROMPT_PATH = CONFIG_DIR / "prompts" / "analyst.md"
 
@@ -27,19 +27,8 @@ def _load_prompt() -> str:
 
 
 def load_provider_hints(provider_key: str) -> dict[str, Any]:
-    """Load hints for a specific provider. Returns empty dict if none exist."""
-    if not HINTS_PATH.exists():
-        return {}
-    try:
-        all_hints = json.loads(HINTS_PATH.read_text(encoding="utf-8"))
-        return all_hints.get(provider_key, {})
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def _save_hints(all_hints: dict[str, Any]) -> None:
-    HINTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    HINTS_PATH.write_text(json.dumps(all_hints, indent=2), encoding="utf-8")
+    """Backward-compatible learned-hints accessor."""
+    return load_provider_playbook(provider_key).learned_hints()
 
 
 def _load_provider_config(provider_key: str) -> dict[str, Any]:
@@ -154,8 +143,10 @@ async def analyze_run(
         logger.info("No issues detected in %s run, skipping analysis", provider_key)
         return {}
 
-    existing_hints = load_provider_hints(provider_key)
+    playbook = load_provider_playbook(provider_key)
+    existing_hints = playbook.learned_hints()
     existing_hints_text = json.dumps(existing_hints, indent=2) if existing_hints else "None — this is the first analysis for this provider."
+    existing_extraction_prompt = playbook.extraction_context() or "None — there is no provider-specific extraction prompt yet."
 
     provider_config = _load_provider_config(provider_key)
     provider_config_text = json.dumps(provider_config, indent=2) if provider_config else "No provider config found."
@@ -166,6 +157,7 @@ async def analyze_run(
         .replace("{provider_key}", provider_key)
         .replace("{logs}", log_text)
         .replace("{existing_hints}", existing_hints_text)
+        .replace("{existing_extraction_prompt}", existing_extraction_prompt)
         .replace("{provider_config}", provider_config_text)
     )
 
@@ -205,15 +197,16 @@ async def analyze_run(
     if isinstance(config_patches, dict) and config_patches:
         _apply_config_patches(provider_key, config_patches)
 
-    # Replace hints for this provider (analyst returns the complete curated set)
-    try:
-        all_hints = json.loads(HINTS_PATH.read_text(encoding="utf-8")) if HINTS_PATH.exists() else {}
-    except (json.JSONDecodeError, OSError):
-        all_hints = {}
+    extraction_prompt = result.pop("extraction_prompt", None)
+    if extraction_prompt is not None and not isinstance(extraction_prompt, str):
+        extraction_prompt = None
 
-    result["updated_at"] = datetime.utcnow().isoformat()
-    all_hints[provider_key] = result
-    _save_hints(all_hints)
+    playbook = save_provider_playbook_hints(
+        provider_key,
+        result,
+        extraction_prompt=extraction_prompt,
+    )
+    result = playbook.learned_hints()
 
     logger.info(
         "Analyst saved hints for %s: %d failed, %d effective, %d tips",

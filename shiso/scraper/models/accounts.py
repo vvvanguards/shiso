@@ -151,6 +151,7 @@ class ScraperLoginSyncRun(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     scraper_login_id: Mapped[int] = mapped_column(ForeignKey("scraper_logins.id", ondelete="CASCADE"), nullable=False)
     provider_key: Mapped[str] = mapped_column(String, nullable=False)
+    account_filter: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String, nullable=False, default="running")
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime)

@@ -6,10 +6,13 @@ LOGS:
 EXISTING HINTS (from previous analysis):
 {existing_hints}
 
+CURRENT EXTRACTION PROMPT:
+{existing_extraction_prompt}
+
 CURRENT PROVIDER CONFIG:
 {provider_config}
 
-Analyze the logs and produce updated hints AND config recommendations for future runs.
+Analyze the logs and produce updated hints, extraction guidance, AND config recommendations for future runs.
 
 ## Your tasks
 
@@ -28,12 +31,18 @@ Analyze the logs and produce updated hints AND config recommendations for future
    - **start_url**: If the login page URL should change
    - Only include keys that should change. Omit keys that are fine as-is.
 
+4. **Refine the extraction prompt when needed**
+   - If the current extraction prompt is missing important provider-specific guidance, return a revised `extraction_prompt`
+   - Prefer short, high-signal instructions the browser agent can follow reliably
+   - If the current prompt is still good, omit `extraction_prompt`
+
 ## Rules
 - Each hint item: concise, actionable one-liner (max 150 chars)
 - Focus on patterns, not one-off events
 - Prioritize lessons that prevent wasted steps or loops
 - 3-8 items per hint category. Omit empty categories.
 - The output REPLACES all existing hints — include everything that should be kept.
+- `extraction_prompt`, if present, should REPLACE the current extraction prompt for this provider.
 - Config patches are MERGED into existing config — only include keys to add or change.
 
 Return JSON only:
@@ -42,6 +51,7 @@ Return JSON only:
   "failed_actions": ["..."],
   "effective_patterns": ["..."],
   "navigation_tips": ["..."],
+  "extraction_prompt": "Optional revised provider-specific extraction guidance",
   "config_patches": {
     "dashboard_url": "https://...",
     "start_url": "https://..."
