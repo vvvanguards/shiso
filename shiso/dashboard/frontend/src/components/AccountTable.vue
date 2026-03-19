@@ -4,7 +4,7 @@
     <Column header="Account" sortField="display_name" sortable>
       <template #body="{ data }">
         <div class="font-medium">{{ data.display_name || data.address || 'Unnamed' }}</div>
-        <div class="text-xs text-shiso-400">{{ data.account_mask ? '••' + data.account_mask : '' }}</div>
+        <div class="text-xs text-surface-400">{{ data.account_mask ? '••' + data.account_mask : '' }}</div>
       </template>
     </Column>
 
@@ -23,7 +23,7 @@
     <Column field="current_balance" header="Balance" sortable>
       <template #body="{ data }">
         <span class="font-medium" :class="balanceColor">{{ money(data.current_balance) }}</span>
-        <div v-if="data.credit_limit" class="text-xs text-shiso-400">of {{ money(data.credit_limit) }}</div>
+        <div v-if="data.credit_limit" class="text-xs text-surface-400">of {{ money(data.credit_limit) }}</div>
       </template>
     </Column>
 
@@ -59,12 +59,12 @@
 
     <Column field="captured_at" header="Updated" sortable>
       <template #body="{ data }">
-        <span class="text-shiso-400 text-xs">{{ relativeTime(data.captured_at) }}</span>
+        <span class="text-surface-400 text-xs">{{ relativeTime(data.captured_at) }}</span>
       </template>
     </Column>
 
     <template #empty>
-      <div class="py-6 text-center text-shiso-400">{{ emptyMessage }}</div>
+      <div class="py-6 text-center text-surface-400">{{ emptyMessage }}</div>
     </template>
   </DataTable>
 </template>
@@ -80,10 +80,11 @@ const props = defineProps({
   rows: { type: Array, required: true },
   sortField: { type: String, default: 'current_balance' },
   sortOrder: { type: Number, default: -1 },
-  balanceColor: { type: String, default: 'text-accent-amber' },
+  balanceColor: { type: String, default: 'text-amber-400' },
   emptyMessage: { type: String, default: 'No accounts found.' },
   showActions: { type: Boolean, default: false },
-  logins: { type: Array, default: () => [] },
+  canSyncRow: { type: Function, default: null },
+  canEditRow: { type: Function, default: null },
 })
 
 const emit = defineEmits(['sync', 'edit'])
@@ -92,17 +93,13 @@ const filtersModel = defineModel('filters', { type: Object, required: true })
 
 const globalFilterFields = ['display_name', 'institution', 'provider_key', 'account_subcategory', 'address']
 
-function linkedLogin(row) {
-  if (!row.scraper_login_id) return null
-  return props.logins.find(l => l.id === row.scraper_login_id) || null
-}
-
 function canSync(row) {
-  const login = linkedLogin(row)
-  return !!(login && login.enabled && !['queued', 'running'].includes(login.last_sync_status))
+  if (props.canSyncRow) return !!props.canSyncRow(row)
+  return !!row.scraper_login_id
 }
 
 function canEdit(row) {
-  return !!linkedLogin(row)
+  if (props.canEditRow) return !!props.canEditRow(row)
+  return !!row.scraper_login_id
 }
 </script>

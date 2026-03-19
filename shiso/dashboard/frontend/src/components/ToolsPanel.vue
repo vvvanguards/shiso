@@ -7,8 +7,8 @@
     <div v-if="workflowSuggestions.length" class="mb-4 rounded-lg border border-amber-800/70 bg-amber-950/20 p-4">
       <div class="mb-3 flex items-start justify-between gap-3">
         <div>
-          <h3 class="text-sm uppercase tracking-widest text-accent-amber">AI Suggestions</h3>
-          <p class="mt-1 text-sm text-shiso-300">Weak or failed tool runs can draft revisions automatically. Review a suggestion, then save it into the tool definition when it looks right.</p>
+          <h3 class="text-sm uppercase tracking-widest text-amber-300">AI Suggestions</h3>
+          <p class="mt-1 text-sm text-surface-300">Weak or failed tool runs can draft revisions automatically. Review a suggestion, then save it into the tool definition when it looks right.</p>
         </div>
         <Tag :value="`${workflowSuggestions.length} Open`" severity="warn" />
       </div>
@@ -16,7 +16,7 @@
         <Column header="Tool">
           <template #body="{ data }">
             <div class="font-medium">{{ data.suggested_definition.name || data.tool_key }}</div>
-            <div class="text-xs text-shiso-400">{{ data.tool_key }} · {{ data.provider_key }}</div>
+            <div class="text-xs text-surface-400">{{ data.tool_key }} · {{ data.provider_key }}</div>
           </template>
         </Column>
         <Column field="trigger_reason" header="Why" />
@@ -33,13 +33,13 @@
         </Column>
       </DataTable>
     </div>
-    <div v-if="!tools.length" class="py-4 text-center text-shiso-400">No tools registered.</div>
+    <div v-if="!tools.length" class="py-4 text-center text-surface-400">No tools registered.</div>
     <div v-else class="space-y-4">
       <DataTable :value="tools" stripedRows size="small">
         <Column field="display_name" header="Tool" sortable>
           <template #body="{ data }">
             <div class="font-medium">{{ data.display_name }}</div>
-            <div class="text-xs text-shiso-400">{{ data.tool_key }}</div>
+            <div class="text-xs text-surface-400">{{ data.tool_key }}</div>
           </template>
         </Column>
         <Column field="description" header="Description" />
@@ -61,7 +61,7 @@
       </DataTable>
 
       <div v-if="selectedToolKey && toolRuns.length" class="mt-4">
-        <h3 class="text-sm uppercase tracking-widest text-shiso-400 mb-2">Recent Runs: {{ selectedToolKey }}</h3>
+        <h3 class="text-sm uppercase tracking-widest text-surface-400 mb-2">Recent Runs: {{ selectedToolKey }}</h3>
         <DataTable :value="toolRuns" stripedRows size="small" :rows="10" :paginator="toolRuns.length > 10">
           <Column field="created_at" header="Date" sortable>
             <template #body="{ data }">{{ relativeTime(data.created_at) }}</template>
@@ -70,7 +70,7 @@
           <Column field="items_count" header="Items" sortable />
           <Column header="Output">
             <template #body="{ data }">
-              <span class="text-xs text-shiso-400 truncate block max-w-[300px]">{{ JSON.stringify(data.output_json).substring(0, 100) }}...</span>
+              <span class="text-xs text-surface-400 truncate block max-w-[300px]">{{ JSON.stringify(data.output_json).substring(0, 100) }}...</span>
             </template>
           </Column>
         </DataTable>
@@ -95,7 +95,7 @@
       <div class="flex flex-col gap-1">
         <label class="text-sm font-medium">Example Items JSON</label>
         <Textarea v-model="toolDraftForm.example_items_json" rows="10" autoResize fluid />
-        <div class="text-xs text-shiso-400">
+        <div class="text-xs text-surface-400">
           Optional. Use a JSON array of sample items to steer the schema, like
           <code>[{"unit":"1A","rent":1200.0}]</code>
         </div>
@@ -138,7 +138,7 @@
       <div class="flex flex-col gap-1">
         <label class="text-sm font-medium">Output Schema JSON</label>
         <Textarea v-model="toolForm.output_schema_json" rows="10" autoResize fluid />
-        <div class="text-xs text-shiso-400">
+        <div class="text-xs text-surface-400">
           Use an array of field specs like
           <code>[{"name":"unit","type":"str"},{"name":"rent","type":"float","nullable":true}]</code>
         </div>

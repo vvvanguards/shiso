@@ -6,9 +6,10 @@
       balanceColor="text-shiso-300"
       emptyMessage="No zero-balance accounts found."
       showActions
-      :logins="logins"
-      @sync="(s) => $emit('sync', s)"
-      @edit="(s) => $emit('edit', s)"
+      :canSyncRow="canSyncRow"
+      :canEditRow="canEditRow"
+      @sync="$emit('sync', $event)"
+      @edit="$emit('edit', $event)"
     />
   </Section>
 </template>
@@ -19,7 +20,8 @@ import AccountTable from './AccountTable.vue'
 
 defineProps({
   rows: { type: Array, required: true },
-  logins: { type: Array, required: true },
+  canSyncRow: { type: Function, required: true },
+  canEditRow: { type: Function, required: true },
 })
 
 const filtersModel = defineModel('filters', { type: Object, required: true })

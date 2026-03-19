@@ -7,25 +7,25 @@
       <Column header="Account">
         <template #body="{ data }">
           <div class="font-medium">{{ data.account_display_name || data.institution }}</div>
-          <div v-if="data.account_mask" class="text-xs text-shiso-400">••{{ data.account_mask }}</div>
+          <div v-if="data.account_mask" class="text-xs text-surface-400">••{{ data.account_mask }}</div>
         </template>
       </Column>
       <Column field="program_name" header="Program" sortable>
         <template #body="{ data }">
           <div class="font-medium">{{ data.program_name }}</div>
-          <div class="text-xs text-shiso-400">{{ data.program_type }}</div>
+          <div class="text-xs text-surface-400">{{ data.program_type }}</div>
         </template>
       </Column>
       <Column field="balance" header="Balance" sortable>
         <template #body="{ data }">
           <span class="font-semibold">{{ formatRewardsBalance(data.balance, data.unit_name, data.program_type) }}</span>
-          <div v-if="data.cents_per_unit" class="text-xs text-shiso-400">≈ ${{ formatMoney(data.monetary_value || 0) }}</div>
+          <div v-if="data.cents_per_unit" class="text-xs text-surface-400">≈ ${{ formatMoney(data.monetary_value || 0) }}</div>
         </template>
       </Column>
       <Column field="monetary_value" header="Value" sortable>
         <template #body="{ data }">
-          <span v-if="data.monetary_value != null" class="text-accent-green font-semibold">{{ money(data.monetary_value) }}</span>
-          <span v-else class="text-shiso-500">—</span>
+          <span v-if="data.monetary_value != null" class="text-green-400 font-semibold">{{ money(data.monetary_value) }}</span>
+          <span v-else class="text-surface-500">—</span>
         </template>
       </Column>
       <Column header="" style="width: 4rem">
@@ -34,10 +34,10 @@
         </template>
       </Column>
       <template #empty>
-        <div class="py-6 text-center text-shiso-400">No rewards programs tracked.</div>
+        <div class="py-6 text-center text-surface-400">No rewards programs tracked.</div>
       </template>
     </DataTable>
-    <div v-else class="py-4 text-center text-shiso-400">
+    <div v-else class="py-4 text-center text-surface-400">
       No rewards programs tracked. <Button @click="emit('add')" label="Add one" severity="secondary" size="small" text />
     </div>
   </Section>

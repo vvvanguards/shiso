@@ -72,9 +72,7 @@ export function useLogins() {
         return
       }
       const idx = logins.value.findIndex(l => l.id === login.id)
-      if (idx >= 0) {
-        logins.value = logins.value.map((l, i) => i === idx ? { ...l, last_sync_status: 'queued' } : l)
-      }
+      if (idx >= 0) logins.value[idx].last_sync_status = 'queued'
       toast.add({ severity: 'info', summary: 'Queued', detail: successDetail || `${login.label} queued for sync`, life: 3000 })
     } catch (err) {
       toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })

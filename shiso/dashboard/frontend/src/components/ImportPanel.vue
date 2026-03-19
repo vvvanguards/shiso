@@ -2,7 +2,7 @@
   <Section header="Import Passwords" :collapsed="true" persistKey="import" class="mb-12">
     <div v-if="!previewData" class="flex items-center gap-4">
       <FileUpload mode="basic" accept=".csv" :auto="true" chooseLabel="Choose CSV File" customUpload @uploader="handleUpload" />
-      <span class="text-sm text-shiso-400">Export from chrome://password-manager/settings</span>
+      <span class="text-sm text-surface-400">Export from chrome://password-manager/settings</span>
     </div>
 
     <div v-else>
@@ -29,7 +29,7 @@
         <Column header="Provider">
           <template #body="{ data }">
             <div class="font-medium">{{ data.provider_label }}</div>
-            <div class="text-xs text-shiso-400">{{ data.provider_key }}</div>
+            <div class="text-xs text-surface-400">{{ data.provider_key }}</div>
           </template>
         </Column>
         <Column field="account_type" header="Type">
@@ -50,7 +50,7 @@
       </DataTable>
 
       <div v-if="showUnmatched" class="mt-4">
-        <h3 class="text-sm uppercase tracking-widest text-shiso-400 mb-2">Unmatched ({{ previewData.unmatched.length }})</h3>
+        <h3 class="text-sm uppercase tracking-widest text-surface-400 mb-2">Unmatched ({{ previewData.unmatched.length }})</h3>
         <DataTable :value="previewData.unmatched" scrollable scrollHeight="300px" size="small">
           <Column field="name" header="Site" />
           <Column field="username" header="Username">
@@ -58,7 +58,7 @@
           </Column>
           <Column field="url" header="URL">
             <template #body="{ data }">
-              <span class="text-xs text-shiso-400 truncate block max-w-[300px]">{{ data.url }}</span>
+              <span class="text-xs text-surface-400 truncate block max-w-[300px]">{{ data.url }}</span>
             </template>
           </Column>
         </DataTable>

@@ -4,103 +4,155 @@
     <ConfirmDialog />
 
     <div class="flex h-screen">
-      <nav class="w-56 bg-shiso-900 border-r border-shiso-800 p-4 overflow-y-auto flex-shrink-0">
-        <div class="space-y-1">
+      <nav class="w-56 bg-shiso-900 border-r border-shiso-800 overflow-y-auto flex-shrink-0">
+        <div class="py-2">
           <button
-            v-for="section in sections"
-            :key="section.id"
-            @click="scrollToSection(section.id)"
+            @click="scrollToSection('overview')"
             :class="[
-              'w-full text-left px-3 py-2 rounded text-sm transition-colors',
-              activeSection === section.id
-                ? 'bg-shiso-700 text-white'
-                : 'text-shiso-400 hover:bg-shiso-800 hover:text-shiso-200'
+              'w-full text-left px-4 py-2 text-sm font-semibold transition-colors border-l-2',
+              activeSection === 'overview'
+                ? 'bg-shiso-700 text-white border-shiso-400'
+                : 'text-shiso-300 hover:bg-shiso-800 hover:text-white border-transparent'
             ]"
           >
-            {{ section.label }}
-            <span v-if="section.count != null" class="text-xs text-shiso-500 ml-1">({{ section.count }})</span>
+            Overview
           </button>
+
+          <div class="h-px bg-shiso-800 my-2" />
+
+          <template v-for="group in sidebarTree" :key="group.name">
+            <div class="px-3 pt-3 pb-1 text-xs font-bold text-shiso-500 uppercase tracking-wider">
+              {{ group.name }}
+            </div>
+            <template v-for="section in group.items" :key="section.id">
+              <button
+                v-if="!section.children"
+                @click="scrollToSection(section.id)"
+                :class="[
+                  'w-full text-left px-4 py-1.5 text-sm transition-colors rounded',
+                  activeSection === section.id
+                    ? 'bg-shiso-700 text-white font-medium'
+                    : 'text-shiso-400 hover:bg-shiso-800 hover:text-shiso-100'
+                ]"
+              >
+                {{ section.label }}
+                <span v-if="section.count != null" class="text-xs text-shiso-500 ml-1">({{ section.count }})</span>
+              </button>
+              <template v-else>
+                <button
+                  @click="scrollToSection(section.id)"
+                  :class="[
+                    'w-full text-left px-4 py-1.5 text-sm font-medium transition-colors rounded flex items-center',
+                    activeSection === section.id
+                      ? 'text-white'
+                      : 'text-shiso-300 hover:text-white'
+                  ]"
+                >
+                  <span>{{ section.label }}</span>
+                  <span v-if="section.count != null" class="text-xs text-shiso-500 ml-1">({{ section.count }})</span>
+                </button>
+                <div class="ml-6 mt-1 space-y-0.5">
+                  <button
+                    v-for="child in section.children"
+                    :key="child.id"
+                    @click="scrollToSection(child.id)"
+                    :class="[
+                      'w-full text-left px-3 py-1.5 text-sm transition-colors rounded',
+                      activeSection === child.id
+                        ? 'bg-shiso-600 text-white font-medium'
+                        : 'text-shiso-400 hover:bg-shiso-700 hover:text-shiso-100'
+                    ]"
+                  >
+                    {{ child.label }}
+                    <span v-if="child.count != null" class="text-xs text-shiso-500 ml-1">({{ child.count }})</span>
+                  </button>
+                </div>
+              </template>
+            </template>
+          </template>
         </div>
       </nav>
 
       <main class="flex-1 overflow-y-auto p-6">
         <div class="mx-auto max-w-7xl space-y-6">
-          <DashboardHeader
-            :loading="loading"
-            :syncingAllLogins="syncingAllLogins"
-            @refresh="loadAll"
-            @sync-all="syncEnabledLogins"
-          />
-
-          <Message v-if="statusMessage" :severity="statusError ? 'error' : 'success'" :closable="true" @close="statusMessage = ''">
-            {{ statusMessage }}
-          </Message>
-
-          <SummaryCards :summary="summary" />
-
-          <ProblemLoginsAlert
-            :problemLogins="problemLoginsDerived"
-            :authLoading="interactiveAuthLoading"
-            @resolve="startInteractiveAuthForLogin"
-          />
-
-          <AgentHelpBanner
-            :sessions="activeSessions"
-            @respond="openAgentDialog"
-          />
-
-          <GlobalSearch v-model="tableFilters['global'].value" />
-
-          <section id="promos">
-            <PromosPanel :promos="promos" :loading="loading" @add="openPromoDialog()" @edit="openPromoDialog($event)" @delete="confirmDeletePromo($event, loadAll)" />
-          </section>
-
-          <section id="rewards">
-            <RewardsPanel :rewards="rewards" :loading="loading" @add="openRewardsDialog()" @edit="openRewardsDialog($event)" />
-          </section>
-
-          <section id="bills">
-            <BillsSection
-              :rows="billRows"
-              v-model:filters="tableFilters"
-              :logins="logins"
-              @sync="syncSnapshotRow($event, logins, syncLoginRow)"
-              @edit="editSnapshotRow($event, logins, openLoginDialog)"
+          <section id="overview">
+            <DashboardHeader
+              :loading="loading"
+              :syncingAllLogins="syncingAllLogins"
+              @refresh="loadAll"
+              @sync-all="syncEnabledLogins"
             />
-          </section>
 
-          <section id="assets">
-            <AssetsSection
-              :rows="assetRows"
-              v-model:filters="tableFilters"
-              :logins="logins"
-              @sync="syncSnapshotRow($event, logins, syncLoginRow)"
-              @edit="editSnapshotRow($event, logins, openLoginDialog)"
+            <Message v-if="statusMessage" :severity="statusError ? 'error' : 'success'" :closable="true" @close="statusMessage = ''">
+              {{ statusMessage }}
+            </Message>
+
+            <SummaryCards :summary="summary" />
+
+            <ProblemLoginsAlert
+              :problemLogins="problemLoginsDerived"
+              :authLoading="interactiveAuthLoading"
+              @resolve="startInteractiveAuthForLogin"
             />
+
+            <AgentHelpBanner
+              :sessions="activeSessions"
+              @respond="openAgentDialog"
+            />
+
+            <GlobalSearch v-model="tableFilters['global'].value" />
           </section>
 
           <section id="liabilities">
             <LiabilitiesSection
               :rows="liabilityRows"
               v-model:filters="tableFilters"
-              :logins="logins"
-              @sync="syncSnapshotRow($event, logins, syncLoginRow)"
-              @edit="editSnapshotRow($event, logins, openLoginDialog)"
+              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
+              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
+              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
+              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
             />
+          </section>
+
+          <section id="bills">
+            <BillsSection
+              :rows="billRows"
+              v-model:filters="tableFilters"
+              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
+              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
+              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
+              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
+            />
+          </section>
+
+          <section id="promos">
+            <PromosPanel :promos="promos" :loading="loading" @add="openPromoDialog()" @edit="openPromoDialog($event)" @delete="confirmDeletePromo($event, loadAll)" />
+          </section>
+
+          <section id="assets">
+            <AssetsSection
+              :rows="assetRows"
+              v-model:filters="tableFilters"
+              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
+              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
+              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
+              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
+            />
+          </section>
+
+          <section id="rewards">
+            <RewardsPanel :rewards="rewards" :loading="loading" @add="openRewardsDialog()" @edit="openRewardsDialog($event)" />
           </section>
 
           <section id="zero-balance">
             <ZeroBalanceSection
               :rows="zeroBalanceRows"
               v-model:filters="tableFilters"
-              :logins="logins"
-              @sync="syncSnapshotRow($event, logins, syncLoginRow)"
-              @edit="editSnapshotRow($event, logins, openLoginDialog)"
+              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
+              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
+              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
+              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
             />
-          </section>
-
-          <section id="tools">
-            <ToolsPanel />
           </section>
 
           <section id="logins">
@@ -181,7 +233,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import Toast from 'primevue/toast'
 import ConfirmDialog from 'primevue/confirmdialog'
@@ -215,7 +267,7 @@ import { usePromos } from './composables/usePromos.js'
 import { useRewards } from './composables/useRewards.js'
 import { useImport } from './composables/useImport.js'
 
-const activeSection = provideActiveSection('bills')
+const activeSection = provideActiveSection('overview')
 
 const {
   summary, loading, statusMessage, statusError, tableFilters,
@@ -262,25 +314,49 @@ const {
   handleFileUpload, clearImport, runImportFromSelection,
 } = useImport()
 
-const sections = computed(() => [
-  { id: 'promos', label: 'Promo APRs', count: promos.value.length },
-  { id: 'rewards', label: 'Rewards', count: rewards.value.length },
-  { id: 'bills', label: 'Bills', count: billRows.value.length },
-  { id: 'assets', label: 'Assets', count: assetRows.value.length },
-  { id: 'liabilities', label: 'Liabilities', count: liabilityRows.value.length },
-  { id: 'zero-balance', label: 'Zero Balance', count: zeroBalanceRows.value.length },
-  { id: 'tools', label: 'Tools' },
-  { id: 'logins', label: 'Logins', count: logins.value.length },
-  { id: 'import', label: 'Import' },
+const sidebarTree = computed(() => [
+  {
+    name: 'Finances',
+    items: [
+      { id: 'liabilities', label: 'Liabilities', count: liabilityRows.value.length, children: [
+        { id: 'promos', label: 'Promo APRs', count: promos.value.length },
+        { id: 'bills', label: 'Bills', count: billRows.value.length },
+      ]},
+      { id: 'assets', label: 'Assets', count: assetRows.value.length, children: [
+        { id: 'rewards', label: 'Rewards', count: rewards.value.length },
+      ]},
+    ]
+  },
+  {
+    name: 'Status',
+    items: [
+      { id: 'zero-balance', label: 'Zero Balance', count: zeroBalanceRows.value.length },
+    ]
+  },
+  {
+    name: 'Accounts',
+    items: [
+      { id: 'logins', label: 'Logins', count: logins.value.length },
+      { id: 'import', label: 'Import' },
+    ]
+  },
 ])
 
 function scrollToSection(id) {
   activeSection.value = id
-  const el = document.getElementById(id)
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
 }
+
+watch(activeSection, (sectionId) => {
+  if (!sectionId) return
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const el = document.getElementById(sectionId)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    })
+  })
+})
 
 async function loadAll() {
   loading.value = true

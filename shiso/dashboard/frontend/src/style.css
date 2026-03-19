@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Noto+Serif:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@400;600;700&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -10,82 +10,9 @@ html, body, #app {
 body {
   margin: 0;
   font-family: 'Manrope', 'Segoe UI', sans-serif;
-  background: #0a0f0d;
-  color: #c8e0ce;
 }
 
 h1, h2, h3, .display-font {
-  font-family: 'Noto Serif', 'Georgia', serif;
-  letter-spacing: 0.01em;
-}
-
-/* PrimeVue Aura dark theme overrides — zen green palette */
-.dark-mode {
-  --p-surface-0: #f0f7f2;
-  --p-surface-50: #e4f0e7;
-  --p-surface-100: #c8e0ce;
-  --p-surface-200: #a3c4ab;
-  --p-surface-300: #7fa388;
-  --p-surface-400: #5a7d63;
-  --p-surface-500: #3d5a45;
-  --p-surface-600: #2a3d30;
-  --p-surface-700: #1c2b22;
-  --p-surface-800: #162019;
-  --p-surface-900: #111a16;
-  --p-surface-950: #0a0f0d;
-
-  --p-primary-color: #4ade80;
-  --p-primary-contrast-color: #0a0f0d;
-  --p-primary-hover-color: #86efac;
-  --p-primary-active-color: #22c55e;
-
-  --p-content-background: #111a16;
-  --p-content-hover-background: #162019;
-  --p-content-border-color: #1c2b22;
-
-  --p-text-color: #c8e0ce;
-  --p-text-muted-color: #5a7d63;
-
-  --p-highlight-background: rgba(74, 222, 128, 0.16);
-  --p-highlight-color: #86efac;
-  --p-highlight-focus-background: rgba(74, 222, 128, 0.24);
-  --p-highlight-focus-color: #86efac;
-}
-
-/* Focus ring */
-*:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.25);
-  border-radius: 4px;
-}
-
-/* Smooth transitions on interactive elements */
-button, a, input, select, textarea,
-.p-button, .p-inputtext, .p-card, .p-tag, .p-panel {
-  transition: all 0.2s ease;
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #0a0f0d;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #2a3d30;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #3d5a45;
-}
-
-/* Selection */
-::selection {
-  background: rgba(74, 222, 128, 0.3);
-  color: #f0f7f2;
+  font-family: 'Sora', 'Avenir Next', sans-serif;
+  letter-spacing: -0.03em;
 }

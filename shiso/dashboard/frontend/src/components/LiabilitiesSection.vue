@@ -5,9 +5,10 @@
       v-model:filters="filtersModel"
       emptyMessage="No liability accounts found."
       showActions
-      :logins="logins"
-      @sync="(s) => $emit('sync', s)"
-      @edit="(s) => $emit('edit', s)"
+      :canSyncRow="canSyncRow"
+      :canEditRow="canEditRow"
+      @sync="$emit('sync', $event)"
+      @edit="$emit('edit', $event)"
     >
       <Column field="due_date" header="Due" sortable>
         <template #body="{ data }">{{ data.due_date || '—' }}</template>
@@ -33,7 +34,8 @@ import { money } from '../helpers.js'
 
 defineProps({
   rows: { type: Array, required: true },
-  logins: { type: Array, required: true },
+  canSyncRow: { type: Function, required: true },
+  canEditRow: { type: Function, required: true },
 })
 
 const filtersModel = defineModel('filters', { type: Object, required: true })
