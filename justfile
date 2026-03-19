@@ -1,32 +1,35 @@
 # Shiso development commands
-# Install just: https://github.com/casey/just
+# Install: https://github.com/casey/just
 
-# Default: show available recipes
+set windows-shell := ["cmd.exe", "/C"]
+
+# Show available recipes
 default:
     @just --list
 
-# Start API + worker + frontend in dev mode
-dev: api worker frontend
+# Start all services (API + worker + frontend)
+dev:
+    start /B uv run uvicorn shiso.dashboard.main:app --reload --port 8002
+    start /B uv run python -m shiso.scraper.worker
+    npm run dev --prefix shiso/dashboard/frontend
 
 # Start API server (port 8002)
 api:
     uv run uvicorn shiso.dashboard.main:app --reload --port 8002
 
-# Start scraper worker (processes queued syncs)
+# Start scraper worker
 worker:
     uv run python -m shiso.scraper.worker
 
-# Start Vite frontend dev server
+# Start Vite frontend
 frontend:
-    cd shiso/dashboard/frontend
-    npm run dev
+    npm run dev --prefix shiso/dashboard/frontend
 
-# Build frontend for production
+# Build frontend
 build:
-    cd shiso/dashboard/frontend
-    npm run build
+    npm run build --prefix shiso/dashboard/frontend
 
-# Run all tests
+# Run tests
 test:
     uv run pytest
 
@@ -42,20 +45,19 @@ chrome:
 providers:
     uv run shiso providers
 
-# Run all scrapers (auto mode)
+# Run scrapers (auto mode)
 scrape:
     uv run shiso scrape
 
-# Sync dependencies
+# Sync Python dependencies
 sync:
     uv sync
 
-# Install dependencies
+# Install all dependencies
 install:
     uv sync
-    cd shiso/dashboard/frontend
-    npm install
+    npm install --prefix shiso/dashboard/frontend
 
-# Quick format check
+# Lint check
 lint:
     uv run ruff check shiso tests
