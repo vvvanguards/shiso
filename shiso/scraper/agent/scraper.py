@@ -1053,7 +1053,7 @@ async def scrape_provider(
         start_url: str = ""
         dashboard_url: str | None = str(provider_cfg.get("dashboard_url") or "").strip() or None
 
-        for login in logins:
+        for login_idx, login in enumerate(logins):
             login_id = login.get("id")
             label = login.get("label", provider_key)
             username = login.get("username", "")
@@ -1063,6 +1063,15 @@ async def scrape_provider(
                 if on_log:
                     on_log(f"[{provider_key}] Skipping {label}: no username")
                 continue
+
+            # Clear cookies between logins so the site sees a fresh session
+            if login_idx > 0:
+                try:
+                    await browser_session.clear_cookies()
+                    if on_log:
+                        on_log(f"[{provider_key}] Cleared cookies for fresh login")
+                except Exception as exc:
+                    logger.warning("Failed to clear cookies for %s: %s", provider_key, exc)
 
             start_url = provider_cfg.get("start_url", login.get("login_url", ""))
             # Preserve a previously learned dashboard_url; only override from
