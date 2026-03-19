@@ -21,6 +21,13 @@ worker:
 frontend:
     Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd shiso/dashboard/frontend; npm run dev"
 
+# Stop all services (API, worker, frontend)
+stop:
+    Get-NetTCPConnection -LocalPort 8002 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    Get-NetTCPConnection -LocalPort 5175 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    Get-Process -Name "uvicorn" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Write-Host "Stopped all shiso services"
+
 # Sync all providers (run scrapers in auto mode)
 sync:
     uv run shiso scrape
