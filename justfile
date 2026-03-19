@@ -4,14 +4,14 @@ set shell := ["powershell", "-Command"]
 
 # Default: start all services (frontend + worker + API)
 dev:
-    cd shiso/dashboard/frontend; npm run dev
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd shiso/dashboard/frontend; npm run dev"
     Start-Process powershell -ArgumentList "-NoExit", "-Command", "uv run python -m shiso.scraper.worker"
-    uv run uvicorn shiso.dashboard.main:app --reload --port 8002
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "uv run uvicorn shiso.dashboard.main:app --reload --port 8002"
 
 # Start API + worker only (no frontend)
 start:
     Start-Process powershell -ArgumentList "-NoExit", "-Command", "uv run python -m shiso.scraper.worker"
-    uv run uvicorn shiso.dashboard.main:app --reload --port 8002
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "uv run uvicorn shiso.dashboard.main:app --reload --port 8002"
 
 # Worker only
 worker:
