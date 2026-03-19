@@ -126,7 +126,7 @@ async def run_scrapers(
 
             all_results[name] = sync.results
             persisted_results[name] = sync.persisted
-            all_metrics[name] = sync.metrics
+            all_metrics[name] = sync.metrics.to_dict()
 
             if sync.timed_out:
                 print(f"[{name}] TIMEOUT: {sync.error}")

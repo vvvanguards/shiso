@@ -29,7 +29,14 @@ Analyze the logs and produce updated hints, extraction guidance, AND config reco
 3. **Suggest config changes** — Based on patterns in the logs, suggest updates to the provider config:
    - **dashboard_url**: If the scraper repeatedly fails to find the account overview page, suggest the correct URL (look at URLs in the logs where multiple accounts were discovered)
    - **start_url**: If the login page URL should change
+   - **max_steps**: If the agent used >80% of max_steps and was still extracting, increase by 50%. If the agent completed in <40% of max_steps, reduce to save time and cost. Range: 10–120.
+   - **detail_max_steps**: Steps for account detail enrichment (Pass 1.5). Range: 5–30.
+   - **statement_max_steps**: Steps for statement extraction (Pass 2). Range: 10–50.
+   - **provider_timeout**: Overall timeout in seconds. Range: 300–3600.
+   - **enrich_details**: Set to `false` if detail enrichment consistently finds nothing useful for this provider.
    - Only include keys that should change. Omit keys that are fine as-is.
+   - If login failed with a provider-specific error message not in the standard list, add a failed_action: `login_pattern: <exact error text lowercased>`
+   - If detail enrichment (Pass 1.5) consistently finds no promo/APR data for certain account types (e.g., checking, savings, reward_account), add a navigation_tip: `skip_enrichment_for: checking, savings, reward_account`
 
 4. **Refine the extraction prompt when needed**
    - If the current extraction prompt is missing important provider-specific guidance, return a revised `extraction_prompt`
@@ -54,7 +61,9 @@ Return JSON only:
   "extraction_prompt": "Optional revised provider-specific extraction guidance",
   "config_patches": {
     "dashboard_url": "https://...",
-    "start_url": "https://..."
+    "start_url": "https://...",
+    "max_steps": 75,
+    "enrich_details": false
   }
 }
 ```

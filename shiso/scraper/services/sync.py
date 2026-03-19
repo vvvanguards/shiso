@@ -17,7 +17,7 @@ from ..models.tools import ToolRunOutput
 from ..services.accounts_db import AccountsDB
 from ..agent.analyst import analyze_run
 from ..agent.llm import llm_chat
-from ..agent.scraper import scrape_provider
+from ..agent.scraper import ScrapeMetrics, scrape_provider
 from ..agent.workflow_drafts import capture_workflow_revision_suggestion
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class SyncRun:
         self.logs: list[str] = []
         self.results: list[dict] = []
         self.persisted: list[Any] = []
-        self.metrics: dict[str, Any] = {}
+        self.metrics: ScrapeMetrics = ScrapeMetrics()
         self.error: str | None = None
         self.timed_out: bool = False
 
@@ -80,7 +80,6 @@ def finalize_sync_run(sync: SyncRun) -> None:
     - "timeout": exceeded provider_timeout limit (may have partial results)
     """
     finished_at = datetime.utcnow()
-    metrics = sync.metrics
 
     with SessionLocal() as session:
         db_run = session.get(ScraperLoginSyncRun, sync.run_id)
@@ -109,7 +108,7 @@ def finalize_sync_run(sync: SyncRun) -> None:
             login.last_sync_snapshot_count = len(sync.persisted)
 
         db_run.finished_at = finished_at
-        db_run.metrics = metrics
+        db_run.metrics = sync.metrics.to_dict()
         login.last_sync_finished_at = finished_at
         session.commit()
 
@@ -160,7 +159,7 @@ async def run_sync(
         )
         results = scrape_result.accounts
         sync.results = results
-        sync.metrics = scrape_result.metrics.to_dict()
+        sync.metrics = scrape_result.metrics
 
         # Handle timeout status
         if scrape_result.metrics.timed_out:
@@ -193,9 +192,11 @@ async def run_sync(
     if sync.logs:
         try:
             prev_metrics = _get_previous_metrics(provider_key)
+            prev = ScrapeMetrics.from_dict(prev_metrics) if prev_metrics else None
             hints = await analyze_run(
                 provider_key, sync.logs, llm_chat,
-                previous_metrics=prev_metrics,
+                previous_metrics=prev,
+                metrics=sync.metrics,
             )
             if hints and on_log:
                 n = sum(len(v) for v in hints.values() if isinstance(v, list))
@@ -209,7 +210,7 @@ async def run_sync(
                 provider_key,
                 workflow=workflow,
                 sync_run_id=sync.run_id,
-                metrics=sync.metrics,
+                metrics=sync.metrics.to_dict(),
                 results=sync.results,
                 error=sync.error,
                 log_lines=sync.logs,

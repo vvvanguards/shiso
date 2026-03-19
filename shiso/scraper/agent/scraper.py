@@ -108,12 +108,12 @@ from ..tools.workflows import AccountOutput, AccountListOutput  # noqa: F401
 from ..tools.workflows import Workflow
 
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 
 @dataclass
 class ScrapeMetrics:
-    """Structured metrics from a scraper run — no log parsing needed."""
+    """Structured metrics from a scraper run."""
     accounts_found: int = 0
     accounts_before_filter: int = 0
     account_filter: str | None = None
@@ -123,19 +123,19 @@ class ScrapeMetrics:
     timed_out: bool = False
     timeout_seconds: float | None = None
     elapsed_seconds: float | None = None
+    # Log-parsed supplemental fields (populated by extract_run_metrics)
+    accounts_complete: int = 0
+    crises_hit: int = 0
+    logins_attempted: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "accounts_found": self.accounts_found,
-            "accounts_before_filter": self.accounts_before_filter,
-            "account_filter": self.account_filter,
-            "steps_taken": self.steps_taken,
-            "failed_actions": self.failed_actions,
-            "errors": self.errors,
-            "timed_out": self.timed_out,
-            "timeout_seconds": self.timeout_seconds,
-            "elapsed_seconds": self.elapsed_seconds,
-        }
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ScrapeMetrics:
+        import dataclasses as _dc
+        known = {f.name for f in _dc.fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
 
 @dataclass
@@ -438,6 +438,18 @@ _LOGIN_FAILURE_PATTERNS = [
 ]
 
 
+def _get_login_failure_patterns(playbook: "ProviderPlaybook | None" = None) -> list[str]:
+    """Build login failure patterns from defaults + playbook failed_actions."""
+    patterns = list(_LOGIN_FAILURE_PATTERNS)
+    if not playbook:
+        return patterns
+    for item in playbook.failed_actions:
+        lower = item.lower()
+        if lower.startswith("login_pattern:"):
+            patterns.append(lower.split(":", 1)[1].strip())
+    return patterns
+
+
 async def _on_step(agent: Agent, on_log: Callable[[str], None] | None) -> None:
     """Called after each Agent step. Emits log lines for analyst."""
     step_num = agent.state.n_steps if hasattr(agent, "state") else 0
@@ -457,7 +469,8 @@ async def _on_step(agent: Agent, on_log: Callable[[str], None] | None) -> None:
     # Check agent memory for login failure — abort early instead of retrying
     if hasattr(agent, "state") and hasattr(agent.state, "memory"):
         memory = (agent.state.memory or "").lower()
-        for pattern in _LOGIN_FAILURE_PATTERNS:
+        patterns = getattr(agent, "_login_patterns", _LOGIN_FAILURE_PATTERNS)
+        for pattern in patterns:
             if pattern in memory:
                 if on_log:
                     on_log(f"Step {step_num}: login failure detected — aborting")
@@ -481,10 +494,11 @@ async def _enrich_account_details(
     dashboard_url: str | None = None,
     start_url: str | None = None,
     on_log: Callable[[str], None] | None = None,
+    playbook: "ProviderPlaybook | None" = None,
 ) -> None:
     """Navigate to each account's detail page and extract promo APR and other details."""
     agent_cfg = config.get("agent", {})
-    detail_max_steps = agent_cfg.get("detail_max_steps", 15)
+    detail_max_steps = provider_cfg.get("detail_max_steps", agent_cfg.get("detail_max_steps", 15))
     institution = provider_cfg.get("institution", provider_key.replace("_", " ").title())
     tools = _build_tools(interactive=False)
 
@@ -496,10 +510,23 @@ async def _enrich_account_details(
         if dashboard_url else None
     )
 
+    # Parse skip_enrichment_for from playbook navigation_tips
+    skip_types: set[str] = set()
+    for tip in (playbook.navigation_tips if playbook else []):
+        if tip.lower().startswith("skip_enrichment_for:"):
+            skip_types.update(t.strip() for t in tip.split(":", 1)[1].split(","))
+
     for acct in accounts:
         card_name = acct.get("card_name", "unknown")
         mask = acct.get("account_mask", "")
         mask_hint = f" ending in {mask}" if mask else ""
+
+        # Skip enrichment for account types the playbook says are unproductive
+        acct_type = (acct.get("account_type") or "").lower().replace(" ", "_")
+        if acct_type and acct_type in skip_types:
+            if on_log:
+                on_log(f"[{provider_key}] Skipping enrichment for {card_name} (type: {acct_type})")
+            continue
 
         if on_log:
             on_log(f"[{provider_key}] Enriching details for {card_name}{mask_hint}...")
@@ -548,6 +575,7 @@ IMPORTANT:
             max_actions_per_step=3,
             initial_actions=_initial_actions,
             use_judge=False,
+            extend_system_message=playbook.system_message() if playbook else "",
         )
 
         try:
@@ -690,7 +718,7 @@ IMPORTANT:
             browser_session=browser_session,
             tools=tools,
             use_vision=True,
-            max_steps=stmt_cfg.get("max_steps", 30),
+            max_steps=provider_cfg.get("statement_max_steps", stmt_cfg.get("max_steps", 30)),
             max_failures=agent_cfg.get("max_failures", 3),
             max_actions_per_step=1,
             initial_actions=_initial_actions,
@@ -833,8 +861,8 @@ def _learn_dashboard_url(
     clean_url = clean_url.split("#")[0]
 
     # Persist to scraper.toml
-    from .analyst import _apply_config_patches
-    _apply_config_patches(provider_key, {"dashboard_url": clean_url})
+    from .analyst import ConfigPatch, _apply_config_patches
+    _apply_config_patches(provider_key, ConfigPatch(dashboard_url=clean_url))
 
     if on_log:
         on_log(f"[{provider_key}] Learned dashboard URL: {clean_url}")
@@ -1053,7 +1081,7 @@ async def scrape_provider(
                 browser_session=browser_session,
                 tools=tools,
                 use_vision=True,
-                max_steps=agent_cfg.get("max_steps", 50),
+                max_steps=provider_cfg.get("max_steps", agent_cfg.get("max_steps", 50)),
                 max_failures=agent_cfg.get("max_failures", 3),
                 max_actions_per_step=agent_cfg.get("max_actions_per_step", 3),
                 extend_system_message=playbook.system_message(),
@@ -1061,6 +1089,8 @@ async def scrape_provider(
                 sensitive_data={"x_username": username, "x_password": password},
                 directly_open_url=start_url,
             )
+
+            agent._login_patterns = _get_login_failure_patterns(playbook)
 
             try:
                 history = await agent.run(
@@ -1196,7 +1226,7 @@ async def scrape_provider(
 
         # --- Pass 1.5: enrich account details (promo APR, credit limit) ---
         if all_accounts:
-            enrich_details = agent_cfg.get("enrich_details", True)  # Enable by default
+            enrich_details = provider_cfg.get("enrich_details", agent_cfg.get("enrich_details", True))
             if enrich_details:
                 if on_log:
                     on_log(f"[{provider_key}] Enriching account details...")
@@ -1210,6 +1240,7 @@ async def scrape_provider(
                     dashboard_url=dashboard_url,
                     start_url=start_url,
                     on_log=on_log,
+                    playbook=playbook,
                 )
 
         # --- Pass 2: download statement PDFs and extract billing data ---
