@@ -307,14 +307,28 @@ def _account_key(account: dict[str, Any]) -> str:
     return f"unknown:{id(account)}"
 
 
+def _normalize_name(name: str | None) -> str:
+    """Lowercase, collapse whitespace, strip common suffixes for comparison."""
+    if not name:
+        return ""
+    s = " ".join(name.strip().lower().split())
+    for suffix in (" card", " account"):
+        if s.endswith(suffix):
+            s = s[: -len(suffix)].strip()
+    return s
+
+
 def _find_matching_key(collected: dict[str, dict], account: dict) -> str | None:
     """Find if account already exists under a different key."""
     mask = _normalize_mask(account.get("account_mask"))
-    if not mask:
-        return None
+    name = _normalize_name(account.get("card_name"))
+
     for key, existing in collected.items():
-        if _normalize_mask(existing.get("account_mask")) == mask:
+        if mask and _normalize_mask(existing.get("account_mask")) == mask:
             return key
+        if name and not _is_generic_account_name(account.get("card_name")):
+            if _normalize_name(existing.get("card_name")) == name:
+                return key
     return None
 
 
