@@ -521,17 +521,17 @@ class PromoBase(BaseModel):
 
 class PromoResponse(PromoBase):
     id: int
-    # Denormalized account info for display
     display_name: Optional[str] = None
     account_mask: Optional[str] = None
     provider_key: Optional[str] = None
     institution: Optional[str] = None
+    outstanding_balance: Optional[float] = None
     days_remaining: Optional[int] = None
     created_at: str
     updated_at: str
 
 
-def _promo_to_response(promo: scraper.PromoAprPeriod, account: scraper.FinancialAccount | None = None) -> PromoResponse:
+def _promo_to_response(promo: scraper.PromoAprPeriod, account: scraper.FinancialAccount | None = None, outstanding_balance: float | None = None) -> PromoResponse:
     from datetime import date
     days = None
     try:
@@ -555,6 +555,7 @@ def _promo_to_response(promo: scraper.PromoAprPeriod, account: scraper.Financial
         account_mask=account.account_mask if account else None,
         provider_key=account.provider_key if account else None,
         institution=account.institution if account else None,
+        outstanding_balance=outstanding_balance,
         days_remaining=days,
         created_at=promo.created_at.isoformat(),
         updated_at=promo.updated_at.isoformat(),
@@ -572,7 +573,18 @@ def list_promos(active_only: bool = False):
             query = query.filter(scraper.PromoAprPeriod.active.is_(True))
         query = query.order_by(scraper.PromoAprPeriod.end_date)
         rows = query.all()
-        return [_promo_to_response(promo, account) for promo, account in rows]
+        
+        results = []
+        for promo, account in rows:
+            snapshot = (
+                session.query(scraper.AccountSnapshot)
+                .filter(scraper.AccountSnapshot.financial_account_id == account.id)
+                .order_by(scraper.AccountSnapshot.captured_at.desc())
+                .first()
+            )
+            outstanding_balance = snapshot.current_balance if snapshot else None
+            results.append(_promo_to_response(promo, account, outstanding_balance))
+        return results
 
 
 @app.post("/api/promos", response_model=PromoResponse, status_code=201)

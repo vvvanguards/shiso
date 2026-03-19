@@ -4,10 +4,10 @@
       <Button @click.stop="emit('add')" icon="pi pi-plus" severity="success" size="small" text rounded v-tooltip.top="'Add promo period'" />
     </template>
     <DataTable :value="promos" stripedRows size="small" sortField="end_date" :sortOrder="1" v-if="promos.length">
-      <Column header="Account">
+      <Column header="Account" sortField="display_name" sortable>
         <template #body="{ data }">
-          <div class="font-medium">{{ data.account_display_name || data.account_institution }}</div>
-          <div v-if="data.account_mask" class="text-xs text-surface-400">••{{ data.account_mask }}</div>
+          <div class="font-medium">{{ data.display_name || 'Unnamed' }}</div>
+          <div class="text-xs text-surface-400">{{ data.institution }}{{ data.account_mask ? ' ••' + data.account_mask : '' }}</div>
         </template>
       </Column>
       <Column field="promo_type" header="Type" sortable>
@@ -28,14 +28,8 @@
           </div>
         </template>
       </Column>
-      <Column field="original_amount" header="Amount">
-        <template #body="{ data }">{{ data.original_amount ? money(data.original_amount) : '—' }}</template>
-      </Column>
-      <Column field="regular_apr" header="Regular APR">
-        <template #body="{ data }">
-          <span v-if="data.regular_apr != null" class="text-amber-400">{{ data.regular_apr }}%</span>
-          <span v-else class="text-surface-500">—</span>
-        </template>
+      <Column field="outstanding_balance" header="Balance">
+        <template #body="{ data }">{{ data.outstanding_balance != null ? money(data.outstanding_balance) : '—' }}</template>
       </Column>
       <Column header="" style="width: 6rem">
         <template #body="{ data }">

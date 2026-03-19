@@ -737,7 +737,7 @@ async function savePromo() {
 }
 
 function confirmDeletePromo(promo) {
-  const label = promo.account_display_name || promo.account_institution || 'this promo'
+  const label = promo.display_name || promo.institution || 'this promo'
   const typeLabel = ({ purchase: 'Purchase', balance_transfer: 'Balance Transfer', general: 'General' })[promo.promo_type] || promo.promo_type
   confirm.require({
     message: `Delete ${typeLabel} promo for "${label}"?`,

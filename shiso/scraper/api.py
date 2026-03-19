@@ -12,6 +12,7 @@ except ImportError:
 
 from .database import SessionLocal, init_db
 from .models.accounts import (
+    AccountSnapshot,
     FinancialAccount,
     PromoAprPeriod,
     RewardsProgram,
@@ -56,6 +57,7 @@ __all__ = [
     "SessionLocal",
     "init_db",
     # Models
+    "AccountSnapshot",
     "FinancialAccount",
     "PromoAprPeriod",
     "RewardsProgram",

@@ -488,6 +488,14 @@ async def _enrich_account_details(
     institution = provider_cfg.get("institution", provider_key.replace("_", " ").title())
     tools = _build_tools(interactive=False)
 
+    # Build initial navigation action to ensure we start on the dashboard.
+    # Only use dashboard_url — start_url is the login page and would break
+    # the authenticated session.
+    _initial_actions = (
+        [{"navigate": {"url": dashboard_url, "new_tab": False}}]
+        if dashboard_url else None
+    )
+
     for acct in accounts:
         card_name = acct.get("card_name", "unknown")
         mask = acct.get("account_mask", "")
@@ -524,7 +532,10 @@ Return a JSON object with these fields (use null if not found):
   "interest_rate": <float or null>
 }}
 
-After extracting, navigate back to the dashboard and call done."""
+IMPORTANT:
+- Stay on the account detail/summary page only — do NOT open statements, PDFs, or external pages.
+- Do NOT navigate to any URL outside the dashboard.
+- After extracting, navigate back to the dashboard/account summary and call done."""
 
         agent = Agent(
             task=task,
@@ -535,7 +546,8 @@ After extracting, navigate back to the dashboard and call done."""
             max_steps=detail_max_steps,
             max_failures=agent_cfg.get("max_failures", 2),
             max_actions_per_step=3,
-            directly_open_url=dashboard_url or start_url or "",
+            initial_actions=_initial_actions,
+            use_judge=False,
         )
 
         try:
@@ -609,6 +621,14 @@ async def _download_statements(
     downloaded: list[dict[str, Any]] = []
     tools = _build_tools(interactive=interactive)
 
+    # Build initial navigation action to ensure we start on the dashboard.
+    # Only use dashboard_url — start_url is the login page and would break
+    # the authenticated session.
+    _initial_actions = (
+        [{"navigate": {"url": dashboard_url, "new_tab": False}}]
+        if dashboard_url else None
+    )
+
     for acct in eligible:
         card_name = acct.get("card_name", "unknown")
         mask = acct.get("account_mask", "")
@@ -622,21 +642,47 @@ async def _download_statements(
 
         # Build task for this single account
         task = f"""You are on the {institution} dashboard.
-Download the most recent BILLING STATEMENT PDF for this account: {card_name}{mask_hint}
+Open the most recent BILLING STATEMENT for this account: {card_name}{mask_hint}
 
 Steps:
 1. Click on the account named "{card_name}" to open it
 2. Find "Statements & Activity" or "Statements" link/tab and click it
-3. Click "Go to PDF Statements" or "View PDF Statements" if present
-4. Find the most recent monthly billing statement (has a date like "Feb 26, 2026")
-5. Click the Download button/icon for that statement
-6. WAIT — a "Select File Type" dialog may appear. Click "Download" inside it
-7. Wait for the download to complete
+3. Find the most recent monthly billing statement (has a date like "Feb 26, 2026")
+4. Click to view/open the statement — it may open in browser or download
+5. If it opens in browser: navigate through pages to find billing details
+6. If it downloads instead: note that the file was downloaded
+
+When viewing the statement, extract these fields (use null if not found):
+- due_date: Payment due date (YYYY-MM-DD)
+- minimum_payment: Minimum payment due
+- statement_balance: New balance / statement balance
+- credit_limit: Credit line / spending limit
+- intro_apr_rate: Promotional/intro APR rate (e.g. 0.0 for 0%)
+- intro_apr_end_date: When intro APR ends (YYYY-MM-DD)
+- regular_apr: Standard APR after promo ends
+- statement_date: Statement closing date (YYYY-MM-DD)
+
+Look for sections like:
+- "Interest Charge Calculation", "Rate Information", "APR Summary"
+- Payment summary showing due date, minimum payment, balance
+
+Return a JSON object with all found fields:
+{{
+  "due_date": "<YYYY-MM-DD or null>",
+  "minimum_payment": <float or null>,
+  "statement_balance": <float or null>,
+  "credit_limit": <float or null>,
+  "intro_apr_rate": <float or null>,
+  "intro_apr_end_date": "<YYYY-MM-DD or null>",
+  "regular_apr": <float or null>,
+  "statement_date": "<YYYY-MM-DD or null>",
+  "file_downloaded": <true if file saved to disk, false if viewed in browser>
+}}
 
 IMPORTANT:
-- Download ONE statement — the MOST RECENT billing statement only
+- Open ONE statement — the MOST RECENT billing statement only
 - Skip "Important Notices" or "Account Agreement Changes" — not statements
-- When done, call done_action"""
+- When done extracting, call done_action"""
 
         agent = Agent(
             task=task,
@@ -647,21 +693,33 @@ IMPORTANT:
             max_steps=stmt_cfg.get("max_steps", 30),
             max_failures=agent_cfg.get("max_failures", 3),
             max_actions_per_step=1,
-            directly_open_url=dashboard_url or start_url or "",
+            initial_actions=_initial_actions,
+            use_judge=False,
         )
 
+        agent_result = None
         try:
-            await agent.run(on_step_end=lambda a: _on_step(a, on_log))
+            history = await agent.run(on_step_end=lambda a: _on_step(a, on_log))
+            result_text = history.final_result()
+            if result_text:
+                try:
+                    agent_result = json.loads(result_text)
+                    if on_log:
+                        fields = [k for k, v in agent_result.items() if v is not None]
+                        on_log(f"[{provider_key}] Agent extracted from statement: {', '.join(fields)}")
+                except json.JSONDecodeError:
+                    pass
         except Exception as exc:
-            logger.warning("[%s] Statement download failed for %s: %s", provider_key, card_name, exc)
+            logger.warning("[%s] Statement extraction failed for %s: %s", provider_key, card_name, exc)
             if on_log:
-                on_log(f"[{provider_key}] Failed to download statement for {card_name}: {exc}")
+                on_log(f"[{provider_key}] Failed to extract from statement for {card_name}: {exc}")
             continue
 
-        # Find new PDFs for this account
+        # Check for downloaded PDFs (fallback)
         after_pdfs = set(download_dir.glob("*.pdf"))
         new_pdfs = after_pdfs - before_pdfs
 
+        file_path = None
         for pdf_path in new_pdfs:
             size = pdf_path.stat().st_size
 
@@ -681,14 +739,16 @@ IMPORTANT:
                 except Exception:
                     pass  # Keep original name if rename fails
 
-            downloaded.append({
-                "card_name": card_name,
-                "account_mask": mask,
-                "file_path": str(pdf_path),
-                "file_size_bytes": size,
-            })
+            file_path = str(pdf_path)
             if on_log:
                 on_log(f"[{provider_key}] Downloaded: {pdf_path.name} ({size:,} bytes)")
+
+        downloaded.append({
+            "card_name": card_name,
+            "account_mask": mask,
+            "file_path": file_path,
+            "extracted_data": agent_result,
+        })
 
     if on_log:
         on_log(f"[{provider_key}] {len(downloaded)} statement(s) downloaded")
@@ -712,6 +772,74 @@ def _update_auth_status(login_id: int | None, status: str) -> None:
                 session.commit()
     except Exception:
         logger.debug("Could not update auth status for login %s", login_id, exc_info=True)
+
+
+def _learn_dashboard_url(
+    provider_key: str,
+    history: Any,
+    start_url: str,
+    on_log: Callable[[str], None] | None = None,
+) -> str | None:
+    """Learn the dashboard URL from a successful Pass 1 agent run.
+
+    After the agent logs in and discovers accounts, the URL it landed on is the
+    authenticated dashboard.  We extract it from the agent history and persist
+    it to scraper.toml so enrichment / statement agents can navigate back.
+
+    Returns the learned dashboard URL, or None.
+    """
+    try:
+        urls = history.urls() if history else []
+    except Exception:
+        return None
+
+    if not urls:
+        return None
+
+    # Walk backwards through history URLs to find the last authenticated page.
+    # Skip blank/None entries and the start_url (login page).
+    start_host = urlparse(start_url).hostname if start_url else None
+    login_keywords = {"login", "signin", "sign-in", "sign_in", "auth/login", "signon"}
+
+    candidate: str | None = None
+    for url in reversed(urls):
+        if not url:
+            continue
+        parsed = urlparse(url)
+        path_lower = (parsed.path or "").lower()
+        # Skip login pages
+        if any(kw in path_lower for kw in login_keywords):
+            continue
+        # Skip about:blank, chrome:// etc.
+        if parsed.scheme not in ("http", "https"):
+            continue
+        # Skip PDF viewer URLs or document retrieval URLs
+        if "/documents/" in path_lower or path_lower.endswith(".pdf"):
+            continue
+        candidate = url
+        break
+
+    if not candidate:
+        return None
+
+    # Strip query params and fragments to get a clean, stable URL
+    parsed = urlparse(candidate)
+    clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    # Some dashboards need specific query params (e.g. ?p1=yes) — keep them
+    # if the path alone looks like a generic route
+    if parsed.query:
+        clean_url = f"{clean_url}?{parsed.query}"
+    # Strip trailing fragment
+    clean_url = clean_url.split("#")[0]
+
+    # Persist to scraper.toml
+    from .analyst import _apply_config_patches
+    _apply_config_patches(provider_key, {"dashboard_url": clean_url})
+
+    if on_log:
+        on_log(f"[{provider_key}] Learned dashboard URL: {clean_url}")
+
+    return clean_url
 
 
 def _persist_statement(
@@ -878,6 +1006,11 @@ async def scrape_provider(
 
     async def _run_scrape_with_timeout():
         """Inner function that does the actual scraping, wrapped by timeout."""
+        nonlocal all_accounts
+        # Track URLs across logins so enrichment/statement passes can navigate back.
+        start_url: str = ""
+        dashboard_url: str | None = str(provider_cfg.get("dashboard_url") or "").strip() or None
+
         for login in logins:
             login_id = login.get("id")
             label = login.get("label", provider_key)
@@ -890,7 +1023,10 @@ async def scrape_provider(
                 continue
 
             start_url = provider_cfg.get("start_url", login.get("login_url", ""))
-            dashboard_url = str(provider_cfg.get("dashboard_url") or "").strip() or None
+            # Preserve a previously learned dashboard_url; only override from
+            # config if we don't have one yet.
+            if not dashboard_url:
+                dashboard_url = str(provider_cfg.get("dashboard_url") or "").strip() or None
             account_type = login.get("account_type")
             playbook = load_provider_playbook(provider_key, account_type)
 
@@ -997,6 +1133,15 @@ async def scrape_provider(
                     if on_log:
                         on_log(f"[{provider_key}] Got {len(all_accounts)} item(s) from {label}")
 
+                    # Learn dashboard URL from the agent's navigation history
+                    # so enrichment / statement agents can navigate back reliably.
+                    if not dashboard_url:
+                        learned = _learn_dashboard_url(
+                            provider_key, history, start_url, on_log=on_log,
+                        )
+                        if learned:
+                            dashboard_url = learned
+
                 # Mark login as authenticated
                 _update_auth_status(login_id, "authenticated")
 
@@ -1062,8 +1207,8 @@ async def scrape_provider(
                     provider_key=provider_key,
                     provider_cfg=provider_cfg,
                     config=config,
-                    dashboard_url=provider_cfg.get("dashboard_url"),
-                    start_url=provider_cfg.get("start_url"),
+                    dashboard_url=dashboard_url,
+                    start_url=start_url,
                     on_log=on_log,
                 )
 
@@ -1082,69 +1227,75 @@ async def scrape_provider(
                 provider_cfg=provider_cfg,
                 config=config,
                 download_dir=download_dir,
-                dashboard_url=provider_cfg.get("dashboard_url"),
-                start_url=provider_cfg.get("start_url"),
+                dashboard_url=dashboard_url,
+                start_url=start_url,
                 on_log=on_log,
                 interactive=interactive,
             )
 
-            # Parse downloaded PDFs and enrich accounts with statement data
-            if statement_results:
-                from .pdf_utils import extract_statement_data, extract_pdf_text
-                from .llm import llm_chat
+            # Process statement results: use agent-extracted data; fall back to PDF parsing only if needed
+            for dl in statement_results:
+                stmt_data = dl.get("extracted_data")
+                file_path = dl.get("file_path")
 
-                for dl in statement_results:
-                    try:
-                        # Find the account by card_name/mask (already set from download)
-                        card_name = dl.get("card_name", "")
-                        mask = dl.get("account_mask", "")
-                        matched_acct = None
-                        for acct in all_accounts:
-                            if mask and acct.get("account_mask") == mask:
-                                matched_acct = acct
-                                break
-                        if not matched_acct and card_name:
-                            for acct in all_accounts:
-                                if acct.get("card_name") == card_name:
-                                    matched_acct = acct
-                                    break
+                # Skip if we don't have data from anywhere
+                if not stmt_data and not file_path:
+                    continue
 
-                        stmt_data = await extract_statement_data(dl["file_path"], llm_chat)
-                        if stmt_data:
-                            dl["statement_data"] = stmt_data
+                if not stmt_data and file_path:
+                    # No agent extraction, parse downloaded PDF
+                    from .pdf_utils import extract_statement_data
+                    from .llm import llm_chat
+                    stmt_data = await extract_statement_data(file_path, llm_chat)
+                    if on_log:
+                        card_name = dl.get("card_name", "unknown")
+                        on_log(f"[{provider_key}] PDF parsed for {card_name}")
 
-                            if matched_acct:
-                                # Enrich the scraped account dict with PDF-extracted fields
-                                for field in ("due_date", "minimum_payment", "statement_balance",
-                                              "last_payment_amount", "last_payment_date",
-                                              "credit_limit"):
-                                    pdf_val = stmt_data.get(field)
-                                    if pdf_val is not None:
-                                        matched_acct[field] = pdf_val
-                                for field in ("intro_apr_rate", "intro_apr_end_date", "regular_apr"):
-                                    pdf_val = stmt_data.get(field)
-                                    if pdf_val is not None:
-                                        matched_acct[field] = pdf_val
+                if not stmt_data:
+                    continue
 
-                                # Persist to AccountStatement table
-                                if accounts_db:
-                                    _persist_statement(
-                                        accounts_db, provider_key, matched_acct, dl, stmt_data, on_log,
-                                    )
+                # Find the matching account
+                card_name = dl.get("card_name", "")
+                mask = dl.get("account_mask", "")
+                matched_acct = None
+                for acct in all_accounts:
+                    if mask and acct.get("account_mask") == mask:
+                        matched_acct = acct
+                        break
+                if not matched_acct and card_name:
+                    for acct in all_accounts:
+                        if acct.get("card_name") == card_name:
+                            matched_acct = acct
+                            break
 
-                                if on_log:
-                                    filled = [f for f in stmt_data if stmt_data[f] is not None]
-                                    on_log(f"[{provider_key}] PDF enriched {card_name}: {', '.join(filled)}")
-                            else:
-                                if on_log:
-                                    on_log(f"[{provider_key}] PDF {dl['file_path']} — no account match found")
-                    except Exception as exc:
-                        logger.exception("Statement parsing failed for %s", dl["file_path"])
-                        if on_log:
-                            on_log(f"[{provider_key}] PDF parse error: {exc}")
+                if matched_acct:
+                    # Enrich the scraped account dict with extracted fields
+                    for field in ("due_date", "minimum_payment", "statement_balance",
+                                  "last_payment_amount", "last_payment_date",
+                                  "credit_limit"):
+                        val = stmt_data.get(field)
+                        if val is not None:
+                            matched_acct[field] = val
+                    for field in ("intro_apr_rate", "intro_apr_end_date", "regular_apr"):
+                        val = stmt_data.get(field)
+                        if val is not None:
+                            matched_acct[field] = val
+
+                    # Persist to AccountStatement table
+                    if accounts_db:
+                        dl["statement_data"] = stmt_data
+                        _persist_statement(
+                            accounts_db, provider_key, matched_acct, dl, stmt_data, on_log,
+                        )
+
+                    if on_log:
+                        filled = [k for k, v in stmt_data.items() if v is not None]
+                        on_log(f"[{provider_key}] Statement enriched {card_name}: {', '.join(filled)}")
+                elif on_log:
+                    on_log(f"[{provider_key}] Statement for {card_name} — no matching account found")
 
             if on_log:
-                on_log(f"[{provider_key}] Downloaded {len(statement_results)} statement(s)")
+                on_log(f"[{provider_key}] Processed {len(statement_results)} statement(s)")
 
     # Run with timeout
     start_time = time.monotonic()
