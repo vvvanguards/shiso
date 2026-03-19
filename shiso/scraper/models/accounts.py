@@ -33,6 +33,7 @@ class FinancialAccount(Base):
     account_type_id: Mapped[int] = mapped_column(ForeignKey("financial_account_types.id"), nullable=False)
     provider_key: Mapped[str] = mapped_column(Text, nullable=False)
     institution: Mapped[str] = mapped_column(Text, nullable=False)
+    scraper_login_id: Mapped[Optional[int]] = mapped_column(ForeignKey("scraper_logins.id", ondelete="SET NULL"))
     display_name: Mapped[Optional[str]] = mapped_column(Text)
     account_number: Mapped[Optional[str]] = mapped_column(Text)
     account_mask: Mapped[Optional[str]] = mapped_column(Text)
@@ -44,6 +45,8 @@ class FinancialAccount(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     last_snapshot_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    scraper_login: Mapped[Optional["ScraperLogin"]] = relationship(back_populates="accounts")
 
     account_type: Mapped["FinancialAccountType"] = relationship(back_populates="accounts")
     snapshots: Mapped[list["AccountSnapshot"]] = relationship(back_populates="financial_account")
@@ -142,6 +145,7 @@ class ScraperLogin(Base):
 
     snapshots: Mapped[list["AccountSnapshot"]] = relationship(back_populates="scraper_login")
     account_links: Mapped[list["FinancialAccountLogin"]] = relationship(back_populates="scraper_login")
+    accounts: Mapped[list["FinancialAccount"]] = relationship(back_populates="scraper_login")
     sync_runs: Mapped[list["ScraperLoginSyncRun"]] = relationship(back_populates="scraper_login")
 
 

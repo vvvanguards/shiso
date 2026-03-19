@@ -79,6 +79,7 @@ def _queue_sync_run(login_id: int, *, account_filter: str | None = None) -> int 
 
 
 class SnapshotResponse(BaseModel):
+    id: int
     provider_key: str
     institution: str
     scraper_login_id: Optional[int] = None

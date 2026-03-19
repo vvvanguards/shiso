@@ -102,6 +102,8 @@ def _apply_lightweight_schema_updates() -> None:
         }
         if "account_filter" not in sync_run_columns:
             conn.execute(text("ALTER TABLE scraper_login_sync_runs ADD COLUMN account_filter TEXT"))
+        if "agent_log_path" not in sync_run_columns:
+            conn.execute(text("ALTER TABLE scraper_login_sync_runs ADD COLUMN agent_log_path TEXT"))
 
 
 def _seed_account_types() -> None:

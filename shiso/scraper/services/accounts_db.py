@@ -29,6 +29,7 @@ from ..models.accounts import (
 
 @dataclass
 class SnapshotView:
+    id: int
     provider_key: str
     institution: str
     scraper_login_id: int | None
@@ -330,7 +331,7 @@ class AccountsDB:
                 _snapshot_view_from_values(
                     provider_key=account.provider_key,
                     institution=account.institution,
-                    scraper_login_id=snapshot.scraper_login_id,
+                    scraper_login_id=account.scraper_login_id,
                     account=account,
                     row=snapshot.raw_extracted_json,
                     captured_at=snapshot.captured_at,
@@ -560,6 +561,7 @@ class AccountsDB:
                 provider_key=provider_key,
                 institution=institution,
                 account_number=account_number,
+                scraper_login_id=row.get("login_id"),
                 created_at=captured_at,
                 updated_at=captured_at,
                 first_seen_at=captured_at,
@@ -575,6 +577,8 @@ class AccountsDB:
         account.active = _infer_active(row.get("status"))
         account.last_seen_at = captured_at
         account.last_snapshot_at = captured_at
+        if row.get("login_id"):
+            account.scraper_login_id = row.get("login_id")
         return account
 
     def _find_account_by_identifier(
@@ -1091,6 +1095,7 @@ def _snapshot_view_from_values(
     current_balance = row.get("current_balance")
     signed_balance = None if current_balance is None else current_balance * (1 if balance_type == "asset" else -1)
     return SnapshotView(
+        id=account.id,
         provider_key=provider_key,
         institution=institution,
         scraper_login_id=scraper_login_id,

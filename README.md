@@ -47,6 +47,8 @@ uv run shiso scrape amex        # Scrape one provider
 uv run shiso scrape amex -i     # Interactive mode (pause for 2FA)
 uv run shiso chrome             # Launch Chrome with automation profile
 uv run shiso providers          # List configured providers
+uv run shiso auth status        # Check auth status for all logins
+uv run shiso auth login amex -i # Interactively log in
 uv run shiso tune amex          # Tune scraper hints for a provider
 uv run shiso --help             # Full CLI help
 ```

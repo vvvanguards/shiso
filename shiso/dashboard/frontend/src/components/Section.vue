@@ -3,7 +3,7 @@
     <template #header>
       <span class="font-semibold">
         {{ header }}
-        <span v-if="count != null" class="text-surface-400 text-xs ml-1">({{ count }})</span>
+        <span v-if="count != null" class="text-shiso-400 text-xs ml-1">({{ count }})</span>
       </span>
     </template>
     <template #toggleicon="{ collapsed: c }">
@@ -17,7 +17,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch, inject } from 'vue'
 import Panel from 'primevue/panel'
 
 const STORAGE_PREFIX = 'section:'
@@ -31,6 +31,20 @@ const props = defineProps({
 
 const emit = defineEmits(['toggle', 'ready'])
 
+const activeSection = inject('activeSection', null)
+
+const sectionId = computed(() => props.persistKey)
+
+const isCollapsed = computed(() => {
+  if (activeSection?.value && sectionId.value) {
+    return activeSection.value !== sectionId.value
+  }
+  if (!props.persistKey) return props.collapsed
+  const stored = localStorage.getItem(STORAGE_PREFIX + props.persistKey)
+  if (stored !== null) return stored === 'true'
+  return props.collapsed
+})
+
 function loadState() {
   if (!props.persistKey) return props.collapsed
   const stored = localStorage.getItem(STORAGE_PREFIX + props.persistKey)
@@ -38,14 +52,20 @@ function loadState() {
   return props.collapsed
 }
 
-const isCollapsed = ref(loadState())
+const internalCollapsed = ref(loadState())
 
 onMounted(() => {
   emit('ready', isCollapsed.value)
 })
 
+watch(activeSection, (newVal) => {
+  if (newVal && sectionId.value && newVal === sectionId.value) {
+    internalCollapsed.value = false
+  }
+})
+
 function onToggle(e) {
-  isCollapsed.value = e.value
+  internalCollapsed.value = e.value
   if (props.persistKey) {
     localStorage.setItem(STORAGE_PREFIX + props.persistKey, String(e.value))
   }

@@ -1,0 +1,46 @@
+<template>
+  <Section header="Bills" :count="rows.length" persistKey="bills">
+    <AccountTable
+      :rows="rows"
+      v-model:filters="filtersModel"
+      sortField="due_date"
+      :sortOrder="1"
+      emptyMessage="No bills with due dates found."
+      showActions
+      :logins="logins"
+      @sync="(s) => $emit('sync', s)"
+      @edit="(s) => $emit('edit', s)"
+    >
+      <Column field="due_date" header="Due" sortable>
+        <template #body="{ data }">
+          <span :class="isDueSoon(data.due_date) ? 'text-accent-red font-semibold' : ''">{{ data.due_date || '—' }}</span>
+        </template>
+      </Column>
+      <Column field="minimum_payment" header="Min Payment" sortable>
+        <template #body="{ data }">{{ data.minimum_payment ? money(data.minimum_payment) : '—' }}</template>
+      </Column>
+      <Column field="interest_rate" header="APR" sortable>
+        <template #body="{ data }">
+          <span v-if="data.interest_rate != null">{{ data.interest_rate }}%</span>
+          <span v-else class="text-shiso-500">—</span>
+        </template>
+      </Column>
+    </AccountTable>
+  </Section>
+</template>
+
+<script setup>
+import Column from 'primevue/column'
+import Section from './Section.vue'
+import AccountTable from './AccountTable.vue'
+import { money, isDueSoon } from '../helpers.js'
+
+defineProps({
+  rows: { type: Array, required: true },
+  logins: { type: Array, required: true },
+})
+
+const filtersModel = defineModel('filters', { type: Object, required: true })
+
+defineEmits(['sync', 'edit'])
+</script>

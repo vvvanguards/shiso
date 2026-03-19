@@ -6,28 +6,7 @@ Shiso is a local-first personal automation platform. It uses AI-powered browser 
 
 ## Development Environment
 
-**All commands use `uv run shiso`. Cross-platform, no Makefile/justfile needed.**
-
-```bash
-uv sync                              # Install dependencies
-uv run shiso --help                  # CLI help
-uv run shiso scrape                  # Run all scrapers (auto mode)
-uv run shiso scrape amex -i          # Run one provider (interactive, pauses for 2FA)
-uv run shiso chrome                  # Launch Chrome automation profile
-uv run shiso providers               # List configured providers
-uv run shiso auth status             # Check auth status for all logins
-uv run shiso auth login amex -i      # Interactively log in
-uv run shiso tune amex               # Tune scraper hints for a provider
-
-# To run services in separate terminals:
-#   Terminal 1: uv run uvicorn shiso.dashboard.main:app --reload --port 8002   # API
-#   Terminal 2: uv run python -m shiso.scraper.worker                          # Worker
-#   Terminal 3: cd shiso/dashboard/frontend && npm run dev                     # Frontend
-
-uv run pytest                        # Run tests
-uv run ruff check shiso              # Lint
-uv run mypy shiso                    # Type check
-```
+See [README.md](README.md) for setup, basic usage, and running services.
 
 ## Architecture
 
@@ -40,14 +19,6 @@ uv run mypy shiso                    # Type check
 - **`shiso/dashboard/`** — FastAPI API + Vue 3 / PrimeVue frontend
 - **Database**: SQLite at `data/shiso.db` (gitignored)
 - **Config**: `shiso/scraper/config/scraper.toml` (gitignored, see `scraper.example.toml`)
-
-## Browser Profile
-
-Uses a dedicated automation profile at `data/browser-profile/`. Cookies and sessions persist across runs.
-
-- **First run**: `shiso chrome` opens a browser window. Sign into Google (decline sync), then log into provider sites.
-- **Subsequent runs**: Already authenticated — agent goes straight to work.
-- **One instance at a time**: Chrome locks the profile directory. No parallel scraping.
 
 ## Key Patterns
 

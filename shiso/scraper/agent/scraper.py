@@ -1282,11 +1282,16 @@ async def scrape_provider(
         metrics.account_filter = account_filter
         if account_filter and all_accounts:
             filter_lower = account_filter.lower()
+            filter_normalized = _normalize_mask(filter_lower)
             filtered = []
             for acct in all_accounts:
                 card_name = (acct.get("card_name") or "").lower()
                 mask = (acct.get("account_mask") or "").lower()
-                if filter_lower in card_name or filter_lower == mask:
+                mask_normalized = _normalize_mask(mask)
+                address = (acct.get("address") or "").lower()
+                if address and address == filter_lower:
+                    filtered.append(acct)
+                elif filter_lower in card_name or (mask_normalized and filter_normalized == mask_normalized):
                     filtered.append(acct)
             if filtered:
                 if on_log:

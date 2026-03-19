@@ -19,7 +19,7 @@
       <Column header="Provider" sortField="provider_key" sortable>
         <template #body="{ data }">
           <div class="font-medium">{{ data.institution || data.provider_key }}</div>
-          <div class="text-xs text-surface-400">{{ data.label }}</div>
+          <div class="text-xs text-shiso-400">{{ data.label }}</div>
         </template>
       </Column>
       <Column field="account_type" header="Type" sortable>
@@ -36,7 +36,7 @@
         <template #body="{ data }">
           <div class="flex items-center gap-1.5" v-tooltip.top="data.last_sync_error">
             <i :class="syncIcon(data)" />
-            <span class="text-sm text-surface-300">{{ syncTimestamp(data) }}</span>
+            <span class="text-sm text-shiso-300">{{ syncTimestamp(data) }}</span>
           </div>
         </template>
       </Column>
@@ -51,7 +51,7 @@
         </template>
       </Column>
       <template #empty>
-        <div class="py-6 text-center text-surface-400">No logins configured.</div>
+        <div class="py-6 text-center text-shiso-400">No logins configured.</div>
       </template>
     </DataTable>
   </Section>
@@ -75,13 +75,13 @@ const props = defineProps({
 const emit = defineEmits(['add', 'syncAll', 'sync', 'edit', 'toggle', 'delete'])
 
 function syncIcon(login) {
-  if (login.last_auth_status === 'needs_2fa') return 'pi pi-exclamation-triangle text-amber-400'
-  if (login.last_auth_status === 'login_failed') return 'pi pi-times-circle text-red-400'
+  if (login.last_auth_status === 'needs_2fa') return 'pi pi-exclamation-triangle text-accent-amber'
+  if (login.last_auth_status === 'login_failed') return 'pi pi-times-circle text-accent-red'
   const s = login.last_sync_status
-  if (!s) return 'pi pi-minus-circle text-surface-500'
+  if (!s) return 'pi pi-minus-circle text-shiso-500'
   if (s === 'queued' || s === 'running') return 'pi pi-spin pi-spinner text-blue-400'
-  if (s === 'succeeded') return 'pi pi-check-circle text-green-400'
-  return 'pi pi-times-circle text-red-400'
+  if (s === 'succeeded') return 'pi pi-check-circle text-accent-green'
+  return 'pi pi-times-circle text-accent-red'
 }
 
 function syncTimestamp(login) {

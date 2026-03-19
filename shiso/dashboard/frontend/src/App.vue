@@ -63,10 +63,9 @@
             <BillsSection
               :rows="billRows"
               v-model:filters="tableFilters"
-              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
-              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
-              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
-              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
+              :logins="logins"
+              @sync="syncSnapshotRow($event, logins, syncLoginRow)"
+              @edit="editSnapshotRow($event, logins, openLoginDialog)"
             />
           </section>
 
@@ -74,10 +73,9 @@
             <AssetsSection
               :rows="assetRows"
               v-model:filters="tableFilters"
-              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
-              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
-              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
-              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
+              :logins="logins"
+              @sync="syncSnapshotRow($event, logins, syncLoginRow)"
+              @edit="editSnapshotRow($event, logins, openLoginDialog)"
             />
           </section>
 
@@ -85,10 +83,9 @@
             <LiabilitiesSection
               :rows="liabilityRows"
               v-model:filters="tableFilters"
-              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
-              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
-              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
-              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
+              :logins="logins"
+              @sync="syncSnapshotRow($event, logins, syncLoginRow)"
+              @edit="editSnapshotRow($event, logins, openLoginDialog)"
             />
           </section>
 
@@ -96,10 +93,9 @@
             <ZeroBalanceSection
               :rows="zeroBalanceRows"
               v-model:filters="tableFilters"
-              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
-              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
-              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
-              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
+              :logins="logins"
+              @sync="syncSnapshotRow($event, logins, syncLoginRow)"
+              @edit="editSnapshotRow($event, logins, openLoginDialog)"
             />
           </section>
 

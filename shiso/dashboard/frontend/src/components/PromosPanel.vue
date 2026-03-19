@@ -7,7 +7,7 @@
       <Column header="Account" sortField="display_name" sortable>
         <template #body="{ data }">
           <div class="font-medium">{{ data.display_name || 'Unnamed' }}</div>
-          <div class="text-xs text-surface-400">{{ data.institution }}{{ data.account_mask ? ' ••' + data.account_mask : '' }}</div>
+          <div class="text-xs text-shiso-400">{{ data.institution }}{{ data.account_mask ? ' ••' + data.account_mask : '' }}</div>
         </template>
       </Column>
       <Column field="promo_type" header="Type" sortable>
@@ -17,7 +17,7 @@
       </Column>
       <Column field="apr_rate" header="Promo APR" sortable>
         <template #body="{ data }">
-          <span class="font-semibold text-green-400">{{ data.apr_rate }}%</span>
+          <span class="font-semibold text-accent-green">{{ data.apr_rate }}%</span>
         </template>
       </Column>
       <Column field="end_date" header="Expires" sortable>
@@ -40,10 +40,10 @@
         </template>
       </Column>
       <template #empty>
-        <div class="py-6 text-center text-surface-400">No promo periods tracked.</div>
+        <div class="py-6 text-center text-shiso-400">No promo periods tracked.</div>
       </template>
     </DataTable>
-    <div v-else class="py-4 text-center text-surface-400">
+    <div v-else class="py-4 text-center text-shiso-400">
       No promo periods tracked. <Button @click="emit('add')" label="Add one" severity="secondary" size="small" text />
     </div>
   </Section>
@@ -73,9 +73,9 @@ function promoTypeSeverity(type) {
 }
 
 function promoUrgencyClass(daysRemaining) {
-  if (daysRemaining <= 0) return 'text-red-400 font-semibold'
-  if (daysRemaining <= 30) return 'text-red-400 font-semibold'
-  if (daysRemaining <= 90) return 'text-amber-400'
+  if (daysRemaining <= 0) return 'text-accent-red font-semibold'
+  if (daysRemaining <= 30) return 'text-accent-red font-semibold'
+  if (daysRemaining <= 90) return 'text-accent-amber'
   return ''
 }
 </script>

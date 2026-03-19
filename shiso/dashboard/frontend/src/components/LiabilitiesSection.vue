@@ -1,0 +1,42 @@
+<template>
+  <Section header="Liabilities" :count="rows.length" persistKey="liabilities">
+    <AccountTable
+      :rows="rows"
+      v-model:filters="filtersModel"
+      emptyMessage="No liability accounts found."
+      showActions
+      :logins="logins"
+      @sync="(s) => $emit('sync', s)"
+      @edit="(s) => $emit('edit', s)"
+    >
+      <Column field="due_date" header="Due" sortable>
+        <template #body="{ data }">{{ data.due_date || '—' }}</template>
+      </Column>
+      <Column field="minimum_payment" header="Min Payment" sortable>
+        <template #body="{ data }">{{ data.minimum_payment ? money(data.minimum_payment) : '—' }}</template>
+      </Column>
+      <Column field="interest_rate" header="APR" sortable>
+        <template #body="{ data }">
+          <span v-if="data.interest_rate != null">{{ data.interest_rate }}%</span>
+          <span v-else class="text-shiso-500">—</span>
+        </template>
+      </Column>
+    </AccountTable>
+  </Section>
+</template>
+
+<script setup>
+import Column from 'primevue/column'
+import Section from './Section.vue'
+import AccountTable from './AccountTable.vue'
+import { money } from '../helpers.js'
+
+defineProps({
+  rows: { type: Array, required: true },
+  logins: { type: Array, required: true },
+})
+
+const filtersModel = defineModel('filters', { type: Object, required: true })
+
+defineEmits(['sync', 'edit'])
+</script>
