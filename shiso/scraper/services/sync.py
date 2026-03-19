@@ -156,6 +156,7 @@ async def run_sync(
             account_filter=account_filter,
             on_log=_log,
             workflow=workflow,
+            run_id=sync.run_id,
         )
         results = scrape_result.accounts
         sync.results = results
@@ -222,6 +223,14 @@ async def run_sync(
             logger.warning("Workflow analyst failed for %s/%s: %s", provider_key, getattr(workflow, "key", "?"), exc)
 
     finalize_sync_run(sync)
+
+    # Update agent log path if we have it
+    if scrape_result.agent_log_path:
+        with SessionLocal() as session:
+            db_run = session.get(ScraperLoginSyncRun, sync.run_id)
+            db_run.agent_log_path = scrape_result.agent_log_path
+            session.commit()
+
     return sync
 
 

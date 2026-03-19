@@ -157,6 +157,7 @@ class ScraperLoginSyncRun(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     accounts_found: Mapped[Optional[int]] = mapped_column(Integer)
     snapshots_saved: Mapped[Optional[int]] = mapped_column(Integer)
+    agent_log_path: Mapped[Optional[str]] = mapped_column(Text)
     error: Mapped[Optional[str]] = mapped_column(Text)
     metrics: Mapped[Optional[dict]] = mapped_column(JSON)
 

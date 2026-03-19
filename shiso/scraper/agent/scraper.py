@@ -144,6 +144,7 @@ class ScrapeResult:
     """Return value from scrape_provider."""
     accounts: list[dict[str, Any]] = field(default_factory=list)
     metrics: ScrapeMetrics = field(default_factory=ScrapeMetrics)
+    agent_log_path: str | None = None
 
 
 @dataclass
@@ -1008,6 +1009,7 @@ async def scrape_provider(
     account_filter: str | None = None,
     on_log: Callable[[str], None] | None = None,
     workflow: Workflow | None = None,
+    run_id: int | None = None,
 ) -> ScrapeResult:
     """Scrape one provider using browser-use Agent.
 
@@ -1123,6 +1125,18 @@ async def scrape_provider(
                 history = await agent.run(
                     on_step_end=lambda a: _on_step(a, on_log),
                 )
+
+                # Save agent history to disk for debugging
+                log_path: str | None = None
+                if history and run_id and login_id:
+                    from datetime import datetime as _dt
+                    log_dir = Path("data/agent-logs")
+                    log_dir.mkdir(parents=True, exist_ok=True)
+                    timestamp = _dt.utcnow().strftime("%Y%m%d_%H%M%S")
+                    log_path = str(log_dir / f"run_{run_id}_login_{login_id}_{timestamp}.json")
+                    history.save_to_file(log_path)
+                    if on_log:
+                        on_log(f"[{provider_key}] Agent log saved: {log_path}")
 
                 # Collect metrics from agent history
                 metrics.steps_taken += agent.state.n_steps if hasattr(agent, "state") else 0
