@@ -82,14 +82,50 @@ export async function fetchProviders() {
   return response.json()
 }
 
-export async function importPreview(file) {
+export async function importStart(file) {
   const form = new FormData()
   form.append('file', file)
-  const response = await fetch(`${API_BASE}/logins/import/preview`, {
+  const response = await fetch(`${API_BASE}/logins/import/start`, {
     method: 'POST',
     body: form,
   })
-  if (!response.ok) throw new Error('Failed to parse CSV')
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Import failed')
+  }
+  return response.json()
+}
+
+export async function getImportSession(sessionId) {
+  const response = await fetch(`${API_BASE}/logins/import/${sessionId}`)
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to get import session')
+  }
+  return response.json()
+}
+
+export async function confirmImport(sessionId, selectedIds) {
+  const response = await fetch(`${API_BASE}/logins/import/${sessionId}/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(selectedIds),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Confirm failed')
+  }
+  return response.json()
+}
+
+export async function deleteImport(sessionId) {
+  const response = await fetch(`${API_BASE}/logins/import/${sessionId}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Delete failed')
+  }
   return response.json()
 }
 
@@ -232,22 +268,7 @@ export async function updateWorkflowSuggestionStatus(id, status) {
   return response.json()
 }
 
-export async function importLogins(file, selectedRowIds, overwriteRowIds = []) {
-  const form = new FormData()
-  form.append('file', file)
-  const params = new URLSearchParams()
-  params.set('selected', selectedRowIds.join(','))
-  if (overwriteRowIds.length) params.set('overwrite', overwriteRowIds.join(','))
-  const response = await fetch(`${API_BASE}/logins/import?${params}`, {
-    method: 'POST',
-    body: form,
-  })
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}))
-    throw new Error(err.detail || 'Import failed')
-  }
-  return response.json()
-}
+
 
 export async function fetchProblemLogins() {
   const response = await fetch(`${API_BASE}/logins/problems`)

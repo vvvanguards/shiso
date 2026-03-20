@@ -7,10 +7,14 @@ and processed by the standalone worker (shiso.scraper.worker).
 
 import asyncio
 import logging
+import os
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -151,7 +155,7 @@ class LoginResponse(BaseModel):
     username: Optional[str] = None
     has_password: bool = False
     login_url: Optional[str] = None
-    account_type: str
+    account_type: Optional[str] = None
     tool_key: str = "financial_scraper"
     enabled: bool = True
     sort_order: int = 0
@@ -329,29 +333,19 @@ def list_providers():
     return sorted(scraper.PROVIDER_KEYS)
 
 
-@app.post("/api/logins/import/preview")
-async def import_preview(file: UploadFile):
-    content = (await file.read()).decode("utf-8-sig")
-    result = scraper.parse_csv(content)
-
-    # Build lookup of existing logins by (provider_key, username)
-    with scraper.SessionLocal() as session:
-        existing: dict[tuple[str, str], int] = {}
-        for login in session.query(scraper.ScraperLogin).all():
-            if login.username:
-                existing[(login.provider_key, login.username.lower())] = login.id
-
-    # Strip passwords and flag duplicates
-    for row in result["matched"]:
-        row["has_password"] = bool(row.pop("password", None))
-        key = (row["provider_key"], row["username"].lower())
-        row["is_duplicate"] = key in existing
-        row["existing_login_id"] = existing.get(key)
-    return result
+@app.get("/api/logins/provider-mappings")
+def list_provider_mappings():
+    """Return all user-defined provider mappings from DB."""
+    return db.get_provider_mappings()
 
 
-class ImportRequest(BaseModel):
-    rows: list[dict]
+@app.delete("/api/logins/provider-mappings/{domain}")
+def delete_provider_mapping(domain: str):
+    """Delete a user-defined provider mapping."""
+    deleted = db.delete_provider_mapping(domain)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Provider mapping not found")
+    return {"ok": True}
 
 
 class LoginSyncRequest(BaseModel):
@@ -362,73 +356,163 @@ class SingleLoginSyncRequest(BaseModel):
     account_filter: Optional[str] = None
 
 
-@app.post("/api/logins/import")
-async def import_logins(file: UploadFile, selected: str = "", overwrite: str = ""):
-    """Import selected rows from a Chrome passwords CSV.
-
-    `selected` is a comma-separated list of row_ids to import.
-    `overwrite` is a comma-separated list of row_ids to overwrite (update existing credentials).
-    """
+@app.post("/api/logins/import/start")
+async def import_start(file: UploadFile):
+    """Parse CSV, match providers locally, detect duplicates. Returns session immediately."""
     content = (await file.read()).decode("utf-8-sig")
-    result = scraper.parse_csv(content)
+    raw_rows = scraper.parse_csv(content)
 
-    selected_ids = {int(x) for x in selected.split(",") if x.strip()}
-    overwrite_ids = {int(x) for x in overwrite.split(",") if x.strip()}
-    if not selected_ids and not overwrite_ids:
-        raise HTTPException(400, "No rows selected")
+    if not raw_rows:
+        return {"session_id": None, "candidates": [], "summary": {"total": 0, "duplicates": 0}}
 
-    all_matched = {r["row_id"]: r for r in result["matched"]}
+    matched = scraper.match_providers_sync(raw_rows)
 
-    with scraper.SessionLocal() as session:
-        # Build lookup of existing logins
-        existing: dict[tuple[str, str], scraper.ScraperLogin] = {}
-        for login in session.query(scraper.ScraperLogin).all():
+    session = scraper.create_import_session(
+        filename=getattr(file, "filename", "upload.csv"),
+        rows=raw_rows,
+    )
+
+    scraper.apply_matched_results(session.id, matched.get("mappings", []))
+
+    existing: dict[tuple[str, str], scraper.ScraperLogin] = {}
+    with scraper.SessionLocal() as db_session:
+        for login in db_session.query(scraper.ScraperLogin).all():
             if login.username:
                 existing[(login.provider_key, login.username.lower())] = login
 
-        imported = 0
-        updated = 0
-        skipped = 0
-        max_order = session.query(scraper.ScraperLogin).count()
+    duplicates = 0
+    for mapping in matched.get("mappings", []):
+        key = (mapping.get("provider_key", ""), mapping.get("username", "").lower())
+        login = existing.get(key)
+        if login:
+            duplicates += 1
 
-        for row_id in selected_ids | overwrite_ids:
-            row = all_matched.get(row_id)
-            if not row:
+    scraper.refresh_import_session_counts(session.id)
+    candidates = scraper.get_import_candidates(session.id)
+
+    return {
+        "session_id": session.id,
+        "candidates": [_candidate_to_dict(c, existing.get((c.provider_key or "", c.username.lower()))) for c in candidates],
+        "summary": {
+            "total": len(candidates),
+            "duplicates": duplicates,
+        },
+    }
+
+
+@app.get("/api/logins/import/{session_id}")
+async def get_import_session(session_id: int):
+    """Get an import session with its candidates."""
+    session = scraper.get_import_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Import session not found")
+
+    candidates = scraper.get_import_candidates(session_id)
+
+    existing: dict[tuple[str, str], scraper.ScraperLogin] = {}
+    with scraper.SessionLocal() as db_session:
+        for login in db_session.query(scraper.ScraperLogin).all():
+            if login.username:
+                existing[(login.provider_key, login.username.lower())] = login
+
+    return {
+        "session": {
+            "id": session.id,
+            "filename": session.filename,
+            "status": session.status,
+            "total_count": session.total_count,
+            "processed_count": session.processed_count,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+        },
+        "candidates": [_candidate_to_dict(c, existing.get((c.provider_key or "", c.username.lower()))) for c in candidates],
+    }
+
+
+@app.post("/api/logins/import/{session_id}/confirm")
+async def import_confirm(session_id: int, selected_ids: list[int]):
+    """Create/update ScraperLogin from selected candidates, then delete session."""
+    session = scraper.get_import_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Import session not found")
+
+    candidates = {c.id: c for c in scraper.get_import_candidates(session_id)}
+    selected = [candidates[cid] for cid in selected_ids if cid in candidates]
+
+    imported = 0
+    updated = 0
+
+    with scraper.SessionLocal() as db_session:
+        existing: dict[tuple[str, str], scraper.ScraperLogin] = {}
+        for login in db_session.query(scraper.ScraperLogin).all():
+            if login.username:
+                existing[(login.provider_key, login.username.lower())] = login
+
+        max_order = db_session.query(scraper.ScraperLogin).count()
+
+        for candidate in selected:
+            if not candidate.provider_key or not candidate.username:
                 continue
-            key = (row["provider_key"], row["username"].lower())
+            key = (candidate.provider_key, candidate.username.lower())
             existing_login = existing.get(key)
 
             if existing_login:
-                if row_id in overwrite_ids:
-                    # Update credentials on existing login
-                    existing_login.username = row["username"]
-                    if row.get("password"):
-                        existing_login.password_encrypted = scraper.encrypt(row["password"])
-                    if row.get("url"):
-                        existing_login.login_url = row["url"]
-                    updated += 1
-                else:
-                    skipped += 1
+                existing_login.username = candidate.username
+                if candidate.password:
+                    existing_login.password_encrypted = scraper.encrypt(candidate.password)
+                if candidate.url:
+                    existing_login.login_url = candidate.url
+                updated += 1
             else:
+                label = candidate.label or f"{candidate.name} — {candidate.username}"
                 login = scraper.ScraperLogin(
-                    provider_key=row["provider_key"],
-                    label=f'{row["provider_label"]} — {row["username"]}',
-                    username=row["username"],
-                    password_encrypted=scraper.encrypt(row["password"]) if row.get("password") else None,
-                    login_url=row["url"],
-                    account_type=row["account_type"],
+                    provider_key=candidate.provider_key,
+                    label=label,
+                    username=candidate.username,
+                    password_encrypted=scraper.encrypt(candidate.password) if candidate.password else None,
+                    login_url=candidate.url,
+                    account_type=None,
                     sort_order=max_order + imported,
                 )
-                session.add(login)
+                db_session.add(login)
                 existing[key] = login
                 imported += 1
+
         try:
-            session.commit()
+            db_session.commit()
         except IntegrityError as exc:
-            session.rollback()
+            db_session.rollback()
             _raise_login_integrity_error(exc)
 
-    return {"imported": imported, "updated": updated, "skipped": skipped}
+    scraper.delete_import_session(session_id)
+    return {"imported": imported, "updated": updated}
+
+
+@app.delete("/api/logins/import/{session_id}")
+async def import_delete(session_id: int):
+    """Delete an import session and all its candidates."""
+    deleted = scraper.delete_import_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Import session not found")
+    return {"deleted": True}
+
+
+def _candidate_to_dict(candidate, existing_login) -> dict:
+    return {
+        "id": candidate.id,
+        "row_index": candidate.row_index,
+        "name": candidate.name,
+        "url": candidate.url,
+        "domain": candidate.domain,
+        "username": candidate.username,
+        "status": candidate.status,
+        "provider_key": candidate.provider_key,
+        "label": candidate.label,
+        "account_type": candidate.account_type,
+        "is_duplicate": existing_login is not None,
+        "existing_login_id": existing_login.id if existing_login else None,
+        "match_confidence": candidate.match_confidence,
+        "match_type": candidate.match_type,
+    }
 
 
 @app.post("/api/logins/{login_id}/sync", response_model=LoginSyncStartResponse)

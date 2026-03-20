@@ -15,14 +15,24 @@ from .models.accounts import (
     AccountSnapshot,
     FinancialAccount,
     PromoAprPeriod,
+    ProviderMapping,
     RewardsProgram,
     RewardsBalance,
     ScraperLogin,
     ScraperLoginSyncRun,
 )
-from .services.accounts_db import AccountsDB
+from .services.accounts_db import (
+    AccountsDB,
+    apply_matched_results,
+    create_import_session,
+    delete_import_session,
+    get_import_candidates,
+    get_import_session,
+    refresh_import_session_counts,
+)
 from .services.crypto import encrypt
 from .services.password_import import parse_csv
+from .services.provider_matcher import match_providers, match_providers_sync
 from .services.sync import run_sync, create_sync_run
 from .agent.run import load_accounts, run_scrapers
 from .agent.workflow_drafts import (
@@ -60,6 +70,7 @@ __all__ = [
     "AccountSnapshot",
     "FinancialAccount",
     "PromoAprPeriod",
+    "ProviderMapping",
     "RewardsProgram",
     "RewardsBalance",
     "ScraperLogin",
@@ -71,8 +82,16 @@ __all__ = [
     # Services
     "AccountsDB",
     "PROVIDER_KEYS",
+    "apply_matched_results",
+    "create_import_session",
+    "delete_import_session",
     "encrypt",
+    "get_import_candidates",
+    "get_import_session",
     "parse_csv",
+    "match_providers",
+    "match_providers_sync",
+    "refresh_import_session_counts",
     "load_accounts",
     # Scraper operations
     "run_sync",

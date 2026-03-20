@@ -107,10 +107,9 @@
             <LiabilitiesSection
               :rows="liabilityRows"
               v-model:filters="tableFilters"
-              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
-              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
-              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
-              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
+              :logins="logins"
+              @sync="handleSnapshotSync"
+              @edit="handleSnapshotEdit"
             />
           </section>
 
@@ -118,10 +117,9 @@
             <BillsSection
               :rows="billRows"
               v-model:filters="tableFilters"
-              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
-              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
-              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
-              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
+              :logins="logins"
+              @sync="handleSnapshotSync"
+              @edit="handleSnapshotEdit"
             />
           </section>
 
@@ -133,10 +131,9 @@
             <AssetsSection
               :rows="assetRows"
               v-model:filters="tableFilters"
-              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
-              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
-              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
-              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
+              :logins="logins"
+              @sync="handleSnapshotSync"
+              @edit="handleSnapshotEdit"
             />
           </section>
 
@@ -148,10 +145,9 @@
             <ZeroBalanceSection
               :rows="zeroBalanceRows"
               v-model:filters="tableFilters"
-              :canSyncRow="(s) => canSyncSnapshotRow(s, logins)"
-              :canEditRow="(s) => canEditSnapshotRow(s, logins)"
-              @sync="(s) => syncSnapshotRow(s, logins, syncLoginRow)"
-              @edit="(s) => editSnapshotRow(s, logins, openLoginDialog)"
+              :logins="logins"
+              @sync="handleSnapshotSync"
+              @edit="handleSnapshotEdit"
             />
           </section>
 
@@ -172,11 +168,11 @@
 
           <section id="import">
             <ImportPanel
-              :previewData="importPreviewData"
+              :importSession="importSession"
               :importing="importing"
               @upload="handleFileUpload"
-              @import="(rows) => runImportFromSelection(rows, loadLogins)"
-              @clear="clearImport"
+              @import="(ids) => runImportFromSelection(ids, loadLogins)"
+              @cancel="cancelImport"
             />
           </section>
         </div>
@@ -272,7 +268,6 @@ const activeSection = provideActiveSection('overview')
 const {
   summary, loading, statusMessage, statusError, tableFilters,
   billRows, assetRows, liabilityRows, zeroBalanceRows,
-  canSyncSnapshotRow, canEditSnapshotRow, syncSnapshotRow, editSnapshotRow,
   loadDashboard,
 } = useDashboard()
 
@@ -310,8 +305,8 @@ const {
 } = useRewards()
 
 const {
-  importPreviewData, importing,
-  handleFileUpload, clearImport, runImportFromSelection,
+  importSession, importing,
+  handleFileUpload, runImportFromSelection, cancelImport,
 } = useImport()
 
 const sidebarTree = computed(() => [
@@ -357,6 +352,26 @@ watch(activeSection, (sectionId) => {
     })
   })
 })
+
+function handleSnapshotSync(snapshot) {
+  const login = logins.value.find(l => l.id === snapshot.scraper_login_id)
+  if (!login) {
+    toast.add({ severity: 'warn', summary: 'No Linked Login', detail: 'This account is not linked to a scraper login yet.', life: 4000 })
+    return
+  }
+  const accountFilter = snapshot.address || snapshot.account_mask || snapshot.display_name || null
+  const accountLabel = snapshot.display_name || snapshot.account_mask || 'Account'
+  syncLoginRow(login, accountFilter ? { account_filter: accountFilter } : null, `${accountLabel} queued for sync`)
+}
+
+function handleSnapshotEdit(snapshot) {
+  const login = logins.value.find(l => l.id === snapshot.scraper_login_id)
+  if (!login) {
+    toast.add({ severity: 'warn', summary: 'No Linked Login', detail: 'This account is not linked to a scraper login yet.', life: 4000 })
+    return
+  }
+  openLoginDialog(login)
+}
 
 async function loadAll() {
   loading.value = true

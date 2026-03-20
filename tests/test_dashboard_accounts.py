@@ -10,6 +10,7 @@ def test_dashboard_accounts_include_linked_login_id(monkeypatch):
     from shiso.scraper.services.accounts_db import SnapshotView
 
     sample_snapshot = SnapshotView(
+        id=1,
         provider_key="amex",
         institution="American Express",
         scraper_login_id=17,

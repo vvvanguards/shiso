@@ -1,10 +1,9 @@
-import { shallowRef } from 'vue'
+import { ref } from 'vue'
 import { useToast } from 'primevue/usetoast'
-import { importPreview, importLogins } from '../api.js'
+import { importStart, confirmImport, deleteImport } from '../api.js'
 
-const importFile = shallowRef(null)
-const importPreviewData = shallowRef(null)
-const importing = shallowRef(false)
+const importSession = ref(null)
+const importing = ref(false)
 
 export function useImport() {
   const toast = useToast()
@@ -12,32 +11,28 @@ export function useImport() {
   async function handleFileUpload(event) {
     const file = event.files[0]
     if (!file) return
-    importFile.value = file
+    importing.value = true
     try {
-      importPreviewData.value = await importPreview(file)
+      const result = await importStart(file)
+      importSession.value = result
     } catch (err) {
-      toast.add({ severity: 'error', summary: 'Parse Error', detail: err.message, life: 4000 })
+      toast.add({ severity: 'error', summary: 'Import Error', detail: err.message, life: 4000 })
+      importSession.value = null
+    } finally {
+      importing.value = false
     }
   }
 
-  function clearImport() {
-    importPreviewData.value = null
-    importFile.value = null
-  }
-
-  async function runImportFromSelection(selectedRows, onSuccess) {
-    if (!importFile.value || !selectedRows.length) return
+  async function runImportFromSelection(selectedIds, onSuccess) {
+    if (!importSession.value?.session_id || !selectedIds?.length) return
     importing.value = true
     try {
-      const newIds = selectedRows.filter(r => !r.is_duplicate).map(r => r.row_id)
-      const overwriteIds = selectedRows.filter(r => r.is_duplicate).map(r => r.row_id)
-      const result = await importLogins(importFile.value, newIds, overwriteIds)
+      const result = await confirmImport(importSession.value.session_id, selectedIds)
       const parts = []
       if (result.imported) parts.push(`${result.imported} imported`)
       if (result.updated) parts.push(`${result.updated} updated`)
-      if (result.skipped) parts.push(`${result.skipped} skipped`)
       toast.add({ severity: 'success', summary: 'Import Complete', detail: parts.join(', '), life: 5000 })
-      clearImport()
+      importSession.value = null
       if (onSuccess) await onSuccess()
     } catch (err) {
       toast.add({ severity: 'error', summary: 'Import Failed', detail: err.message, life: 4000 })
@@ -46,12 +41,19 @@ export function useImport() {
     }
   }
 
+  async function cancelImport() {
+    if (!importSession.value?.session_id) return
+    try {
+      await deleteImport(importSession.value.session_id)
+    } catch (_) {}
+    importSession.value = null
+  }
+
   return {
-    importFile,
-    importPreviewData,
+    importSession,
     importing,
     handleFileUpload,
-    clearImport,
     runImportFromSelection,
+    cancelImport,
   }
 }

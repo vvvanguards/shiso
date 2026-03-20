@@ -129,7 +129,7 @@ class ScraperLogin(Base):
     username: Mapped[Optional[str]] = mapped_column(String)
     password_encrypted: Mapped[Optional[str]] = mapped_column(String)
     login_url: Mapped[Optional[str]] = mapped_column(String)
-    account_type: Mapped[str] = mapped_column(String, nullable=False)
+    account_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     last_sync_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
@@ -166,6 +166,22 @@ class ScraperLoginSyncRun(Base):
     metrics: Mapped[Optional[dict]] = mapped_column(JSON)
 
     scraper_login: Mapped["ScraperLogin"] = relationship(back_populates="sync_runs", passive_deletes=True)
+
+
+class ProviderMapping(Base):
+    """Domain pattern → provider mapping for password import AI matching."""
+
+    __tablename__ = "provider_mappings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    domain_pattern: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    provider_key: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    account_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="baseline")
+    confidence: Mapped[Optional[float]] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class AccountStatement(Base):
@@ -249,3 +265,51 @@ class RewardsBalance(Base):
 
     rewards_program: Mapped["RewardsProgram"] = relationship(back_populates="balances")
     source_snapshot: Mapped[Optional["AccountSnapshot"]] = relationship(back_populates="rewards_balances")
+
+
+class ImportSession(Base):
+    """An import batch — a CSV file upload with multiple candidates being reviewed."""
+    __tablename__ = "import_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")  # pending | processing | done | cancelled
+    total_count: Mapped[int] = mapped_column(Integer, default=0)
+    processed_count: Mapped[int] = mapped_column(Integer, default=0)
+    high_confidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    needs_review_count: Mapped[int] = mapped_column(Integer, default=0)
+    accepted_count: Mapped[int] = mapped_column(Integer, default=0)
+    rejected_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    candidates: Mapped[list["ImportCandidate"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+
+
+class ImportCandidate(Base):
+    """A single row from an imported CSV, pending review."""
+    __tablename__ = "import_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("import_sessions.id", ondelete="CASCADE"), nullable=False)
+    row_index: Mapped[int] = mapped_column(Integer, nullable=False)  # Original CSV row number
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    domain: Mapped[str] = mapped_column(Text, nullable=False)
+    username: Mapped[str] = mapped_column(Text, nullable=False)
+    password: Mapped[Optional[str]] = mapped_column(Text)  # kept encrypted at rest
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")  # pending | matched | accepted | rejected | skipped
+    match_confidence: Mapped[Optional[float]] = mapped_column(Float)  # 0.0-1.0
+    match_type: Mapped[Optional[str]] = mapped_column(Text)  # exact | subdomain | fuzzy | keyword | llm
+    provider_key: Mapped[Optional[str]] = mapped_column(Text)
+    label: Mapped[Optional[str]] = mapped_column(Text)
+    account_type: Mapped[Optional[str]] = mapped_column(Text)
+    is_new_provider: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_duplicate: Mapped[bool] = mapped_column(Boolean, default=False)  # duplicate of existing scraper_login
+    existing_login_id: Mapped[Optional[int]] = mapped_column(ForeignKey("scraper_logins.id", ondelete="SET NULL"))
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    session: Mapped["ImportSession"] = relationship(back_populates="candidates")
+    existing_login: Mapped[Optional["ScraperLogin"]] = relationship()

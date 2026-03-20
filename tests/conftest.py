@@ -32,3 +32,18 @@ def db_session():
     session = TestSession()
     yield session
     session.close()
+
+
+SAMPLE_CSV_CONTENT = """name,url,username,password
+Chase,https://chase.com,user@example.com,password123
+American Express,https://americanexpress.com,user@example.com,password456
+American Express,https://online.americanexpress.com,user2@example.com,password789
+IndyWater,https://indianaamericanwater.com,user@example.com,password000
+Unknown Service,https://someobscuresite.com,user@example.com,password111
+"""
+
+
+@pytest.fixture()
+def sample_csv_content():
+    """Real Chrome password manager CSV export format."""
+    return SAMPLE_CSV_CONTENT

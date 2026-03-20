@@ -64,17 +64,33 @@ async def llm_chat(messages: list[dict[str, Any]], config: dict | None = None) -
         "model": model,
         "messages": messages,
         "temperature": 0.2,
+        "max_tokens": 500,
     }
+
+    logger.info("LLM request: url=%s model=%s timeout=%s", url, model, timeout)
+    logger.debug("LLM payload messages count: %d", len(messages))
+    if messages:
+        logger.debug("LLM system prompt (first 500 chars): %s", messages[0]["content"][:500])
+        logger.debug("LLM user prompt: %s", messages[-1]["content"][:200])
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
+            logger.info("LLM sending request...")
             response = await client.post(url, json=payload, headers=headers)
+            logger.info("LLM response status: %s", response.status_code)
+            if response.status_code != 200:
+                logger.error("LLM error response: %s", response.text[:500])
+            else:
+                logger.debug("LLM response body (first 500 chars): %s", response.text[:500])
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as e:
-            logger.error("LLM HTTP error: %s %s", e.response.status_code, e.response.text[:300])
+            logger.error("LLM HTTP error: %s %s", e.response.status_code, e.response.text[:500])
             return None
-        except (httpx.TimeoutException, httpx.ConnectError) as e:
+        except httpx.TimeoutException as e:
+            logger.error("LLM timeout after %ss: %s", timeout, e)
+            return None
+        except (httpx.ConnectError, ConnectionError) as e:
             logger.error("LLM connection error: %s", e)
             return None
 
