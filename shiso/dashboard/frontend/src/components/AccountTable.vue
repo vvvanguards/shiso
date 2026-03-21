@@ -83,8 +83,7 @@ const props = defineProps({
   balanceColor: { type: String, default: 'text-amber-400' },
   emptyMessage: { type: String, default: 'No accounts found.' },
   showActions: { type: Boolean, default: false },
-  canSyncRow: { type: Function, default: null },
-  canEditRow: { type: Function, default: null },
+  logins: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['sync', 'edit'])
@@ -93,13 +92,17 @@ const filtersModel = defineModel('filters', { type: Object, required: true })
 
 const globalFilterFields = ['display_name', 'institution', 'provider_key', 'account_subcategory', 'address']
 
+function linkedLogin(row) {
+  if (!row?.scraper_login_id) return null
+  return props.logins.find(l => l.id === row.scraper_login_id) || null
+}
+
 function canSync(row) {
-  if (props.canSyncRow) return !!props.canSyncRow(row)
-  return !!row.scraper_login_id
+  const login = linkedLogin(row)
+  return !!(login && login.enabled && !['queued', 'running'].includes(login.last_sync_status))
 }
 
 function canEdit(row) {
-  if (props.canEditRow) return !!props.canEditRow(row)
-  return !!row.scraper_login_id
+  return !!linkedLogin(row)
 }
 </script>

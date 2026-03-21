@@ -7,8 +7,7 @@
       :sortOrder="1"
       emptyMessage="No bills with due dates found."
       showActions
-      :canSyncRow="canSyncRow"
-      :canEditRow="canEditRow"
+      :logins="logins"
       @sync="$emit('sync', $event)"
       @edit="$emit('edit', $event)"
     >
@@ -38,8 +37,7 @@ import { money, isDueSoon } from '../helpers.js'
 
 defineProps({
   rows: { type: Array, required: true },
-  canSyncRow: { type: Function, required: true },
-  canEditRow: { type: Function, required: true },
+  logins: { type: Array, required: true },
 })
 
 const filtersModel = defineModel('filters', { type: Object, required: true })

@@ -66,23 +66,23 @@ export function useDashboard() {
     return displayName || null
   }
 
-  function linkedLoginForSnapshot(snapshot, logins) {
+  function linkedLoginForSnapshot(snapshot, loginsRef) {
     if (!snapshot?.scraper_login_id) return null
-    const loginArray = logins?.value || []
+    const loginArray = Array.isArray(loginsRef) ? loginsRef : (loginsRef?.value || [])
     return loginArray.find(login => login.id === snapshot.scraper_login_id) || null
   }
 
-  function canSyncSnapshotRow(snapshot, logins) {
-    const login = linkedLoginForSnapshot(snapshot, logins)
+  function canSyncSnapshotRow(snapshot, loginsRef) {
+    const login = linkedLoginForSnapshot(snapshot, loginsRef)
     return !!(login && login.enabled && !['queued', 'running'].includes(login.last_sync_status))
   }
 
-  function canEditSnapshotRow(snapshot, logins) {
-    return !!linkedLoginForSnapshot(snapshot, logins)
+  function canEditSnapshotRow(snapshot, loginsRef) {
+    return !!linkedLoginForSnapshot(snapshot, loginsRef)
   }
 
-  async function syncSnapshotRow(snapshot, logins, syncLoginRow) {
-    const login = linkedLoginForSnapshot(snapshot, logins)
+  async function syncSnapshotRow(snapshot, loginsRef, syncLoginRow) {
+    const login = linkedLoginForSnapshot(snapshot, loginsRef)
     if (!login) {
       toast.add({ severity: 'warn', summary: 'No Linked Login', detail: 'This account is not linked to a scraper login yet.', life: 4000 })
       return
@@ -96,8 +96,8 @@ export function useDashboard() {
     )
   }
 
-  function editSnapshotRow(snapshot, logins, openLoginDialog) {
-    const login = linkedLoginForSnapshot(snapshot, logins)
+  function editSnapshotRow(snapshot, loginsRef, openLoginDialog) {
+    const login = linkedLoginForSnapshot(snapshot, loginsRef)
     if (!login) {
       toast.add({ severity: 'warn', summary: 'No Linked Login', detail: 'This account is not linked to a scraper login yet.', life: 4000 })
       return
