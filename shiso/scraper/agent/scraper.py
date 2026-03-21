@@ -106,7 +106,9 @@ async def _kill_stale_chrome(user_data_dir: Path, *, on_log: Callable | None = N
 # ---------------------------------------------------------------------------
 
 from ..tools.workflows import AccountOutput, AccountListOutput  # noqa: F401
+from ..tools.workflows import BalanceUpdateOutput, BALANCE_UPDATE_WORKFLOW
 from ..tools.workflows import Workflow
+from ..models.sync_type import SyncType
 
 
 from dataclasses import asdict, dataclass, field
@@ -1012,6 +1014,63 @@ def _provider_cookie_domains(config: dict[str, Any]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Sync-type helpers
+# ---------------------------------------------------------------------------
+
+def _load_known_accounts_as_dicts(provider_key: str, logins: list[dict]) -> list[dict]:
+    """Load known accounts from DB as scrape-compatible dicts for statement downloads."""
+    try:
+        from ..database import SessionLocal
+        from ..models.accounts import FinancialAccount
+        login_ids = [l.get("id") for l in logins if l.get("id")]
+        with SessionLocal() as session:
+            query = (
+                session.query(FinancialAccount)
+                .filter(FinancialAccount.provider_key == provider_key)
+                .filter(FinancialAccount.active.is_(True))
+            )
+            accounts = query.all()
+            result = []
+            for acct in accounts:
+                login_id = acct.scraper_login_id if acct.scraper_login_id in login_ids else (login_ids[0] if login_ids else None)
+                result.append({
+                    "card_name": acct.display_name or "",
+                    "account_mask": acct.account_mask or "",
+                    "account_number": acct.account_number or "",
+                    "provider": provider_key,
+                    "login_id": login_id,
+                    "account_type": acct.account_type.name if acct.account_type else "Other",
+                })
+            return result
+    except Exception:
+        return []
+
+
+def _load_known_accounts_text(provider_key: str) -> str:
+    """Load known accounts for a provider from the DB and format for the prompt."""
+    try:
+        from ..database import SessionLocal
+        from ..models.accounts import FinancialAccount
+        with SessionLocal() as session:
+            accounts = (
+                session.query(FinancialAccount)
+                .filter(FinancialAccount.provider_key == provider_key)
+                .filter(FinancialAccount.active.is_(True))
+                .all()
+            )
+            if not accounts:
+                return "(No known accounts — extract all visible accounts on the dashboard.)"
+            lines = []
+            for acct in accounts:
+                mask = acct.account_mask or "????"
+                name = acct.display_name or "(unnamed)"
+                lines.append(f"- {name} (****{mask})")
+            return "\n".join(lines)
+    except Exception:
+        return "(Could not load known accounts — extract all visible accounts on the dashboard.)"
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1027,12 +1086,18 @@ async def scrape_provider(
     workflow: Workflow | None = None,
     run_id: int | None = None,
     human_input_handler: Callable[[str], Any] | None = None,
+    sync_type: SyncType = SyncType.full,
 ) -> ScrapeResult:
     """Scrape one provider using browser-use Agent.
 
     Pass 1: discover accounts from overview page.
     Pass 1.5: enrich account details (promo APR, credit limit).
     Pass 2 (if download_statements): download statement PDFs and extract billing fields.
+
+    The *sync_type* controls which passes run:
+    - ``full``: all passes + LLM assessment
+    - ``balance``: balance-only for known accounts (skips enrichment, statements, assessment)
+    - ``statements``: loads known accounts from DB, skips agent scrape, goes straight to Pass 2
 
     If account_filter is provided, only process matching accounts (by card_name or account_mask).
     """
@@ -1085,7 +1150,17 @@ async def scrape_provider(
         start_url: str = ""
         dashboard_url: str | None = str(provider_cfg.get("dashboard_url") or "").strip() or None
 
+        # Statements-only: skip Pass 1 entirely — load known accounts from DB
+        if sync_type == SyncType.statements:
+            all_accounts = _load_known_accounts_as_dicts(provider_key, logins)
+            if on_log:
+                on_log(f"[{provider_key}] Statements sync: loaded {len(all_accounts)} known account(s) from DB")
+            start_url = provider_cfg.get("start_url", logins[0].get("login_url", "") if logins else "")
+            # Fall through to Pass 2 below (skips Pass 1 and Pass 1.5)
+
         for login in logins:
+            if sync_type == SyncType.statements:
+                break  # accounts already loaded from DB, skip agent scrape
             login_id = login.get("id")
             label = login.get("label", provider_key)
             username = login.get("username", "")
@@ -1105,21 +1180,41 @@ async def scrape_provider(
             playbook = load_provider_playbook(provider_key, account_type)
 
             if on_log:
-                on_log(f"[{provider_key}] Scraping as {label}...")
+                on_log(f"[{provider_key}] Scraping as {label} ({sync_type.value})...")
 
             # Resolve workflow — default to financial_scraper
             from ..tools.workflows import get_workflow as _get_wf, FINANCIAL_WORKFLOW
-            active_wf = workflow or _get_wf("financial_scraper") or FINANCIAL_WORKFLOW
-            output_schema = active_wf.output_schema
-            task = _build_task(
-                provider_key,
-                provider_cfg,
-                dashboard_url,
-                active_wf,
-                playbook.extraction_context(),
-            )
+            if sync_type == SyncType.balance:
+                active_wf = BALANCE_UPDATE_WORKFLOW
+                known_accounts_text = _load_known_accounts_text(provider_key)
+                # Render the balance_update prompt with known accounts
+                prompt_with_accounts = active_wf.prompt_template.replace(
+                    "{{ known_accounts }}", known_accounts_text,
+                )
+                # Build a balance-sync task: lightweight preamble + balance prompt
+                institution = provider_cfg.get("institution", provider_key.replace("_", " ").title())
+                preamble = render_prompt("fast_sync_preamble.md", institution=institution, dashboard_url=dashboard_url)
+                task = preamble + "\n\n" + prompt_with_accounts
+                output_schema = active_wf.output_schema
+            else:
+                active_wf = workflow or _get_wf("financial_scraper") or FINANCIAL_WORKFLOW
+                output_schema = active_wf.output_schema
+                task = _build_task(
+                    provider_key,
+                    provider_cfg,
+                    dashboard_url,
+                    active_wf,
+                    playbook.extraction_context(),
+                )
 
             tools = _build_tools(interactive=interactive, human_input_handler=human_input_handler)
+
+            # Balance sync uses reduced steps; full/statements use standard.
+            if sync_type == SyncType.balance:
+                max_steps = provider_cfg.get("balance_max_steps", agent_cfg.get("balance_max_steps", 15))
+            else:
+                max_steps = provider_cfg.get("max_steps", agent_cfg.get("max_steps", 50))
+            open_url = start_url
 
             agent = Agent(
                 task=task,
@@ -1127,13 +1222,13 @@ async def scrape_provider(
                 browser_session=browser_session,
                 tools=tools,
                 use_vision=True,
-                max_steps=provider_cfg.get("max_steps", agent_cfg.get("max_steps", 50)),
+                max_steps=max_steps,
                 max_failures=agent_cfg.get("max_failures", 3),
                 max_actions_per_step=agent_cfg.get("max_actions_per_step", 3),
                 extend_system_message=playbook.system_message(),
                 output_model_schema=output_schema,
                 sensitive_data={"x_username": username, "x_password": password},
-                directly_open_url=start_url,
+                directly_open_url=open_url,
             )
 
             agent._login_patterns = _get_login_failure_patterns(playbook)
@@ -1208,7 +1303,7 @@ async def scrape_provider(
                     if on_log:
                         on_log(f"[{provider_key}] Pass 1: found {len(login_accounts)} item(s)")
 
-                    if active_wf.key != "financial_scraper":
+                    if active_wf.key not in ("financial_scraper", "balance_update"):
                         # Non-financial workflows: store raw results directly
                         for item in login_accounts:
                             item.setdefault("provider", provider_key)
@@ -1237,16 +1332,26 @@ async def scrape_provider(
                         if learned:
                             dashboard_url = learned
 
-                # Determine auth status via structured LLM assessment
-                assessment = await _assess_run(
-                    history=history,
-                    llm=llm,
-                    accounts_found=len(login_accounts),
-                    provider_key=provider_key,
-                )
-                _update_auth_status(login_id, assessment.status)
-                if on_log:
-                    on_log(f"[{provider_key}] {label}: {assessment.category} — {assessment.reason[:100]}")
+                # Determine auth status — LLM assessment only for full syncs
+                if sync_type != SyncType.full:
+                    if login_accounts:
+                        _update_auth_status(login_id, "authenticated")
+                        if on_log:
+                            on_log(f"[{provider_key}] {label}: {sync_type.value} success — {len(login_accounts)} item(s)")
+                    else:
+                        _update_auth_status(login_id, "needs_2fa")
+                        if on_log:
+                            on_log(f"[{provider_key}] {label}: {sync_type.value} returned no accounts (verdict: {verdict})")
+                else:
+                    assessment = await _assess_run(
+                        history=history,
+                        llm=llm,
+                        accounts_found=len(login_accounts),
+                        provider_key=provider_key,
+                    )
+                    _update_auth_status(login_id, assessment.status)
+                    if on_log:
+                        on_log(f"[{provider_key}] {label}: {assessment.category} — {assessment.reason[:100]}")
 
             except _HumanPauseSkipped:
                 _update_auth_status(login_id, "needs_2fa")
@@ -1303,7 +1408,8 @@ async def scrape_provider(
                 all_accounts.clear()
 
         # --- Pass 1.5: enrich account details (promo APR, credit limit) ---
-        if all_accounts:
+        # Only runs for full syncs.
+        if all_accounts and sync_type == SyncType.full:
             enrich_details = provider_cfg.get("enrich_details", agent_cfg.get("enrich_details", True))
             if enrich_details:
                 if on_log:
@@ -1322,8 +1428,9 @@ async def scrape_provider(
                 )
 
         # --- Pass 2: download statement PDFs and extract billing data ---
+        # Runs for full and statements sync types.
         # Persist accounts first so statement matching can find them in the DB
-        if download_statements and all_accounts and accounts_db:
+        if download_statements and all_accounts and accounts_db and sync_type in (SyncType.full, SyncType.statements):
             accounts_db.save_scrape_results(provider_key, all_accounts)
             if on_log:
                 on_log(f"[{provider_key}] Pass 2: downloading statements...")
@@ -1427,4 +1534,7 @@ async def scrape_provider(
     if on_log:
         on_log(f"[{provider_key}] {len(all_accounts)} account(s) across {len(logins)} login(s)")
 
-    return ScrapeResult(accounts=all_accounts, metrics=metrics)
+    return ScrapeResult(
+        accounts=all_accounts,
+        metrics=metrics,
+    )

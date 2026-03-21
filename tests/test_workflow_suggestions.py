@@ -7,6 +7,7 @@ import asyncio
 from sqlalchemy.orm import sessionmaker
 
 from shiso.scraper.agent import workflow_drafts
+from shiso.scraper.models.sync_type import BUILTIN_SYNC_TYPES, SyncTypeRecord
 from shiso.scraper.tools.workflows import ZILLOW_LEADS_WORKFLOW
 
 
@@ -114,13 +115,20 @@ class TestWorkflowSuggestionPersistence:
 
 class TestRunSyncWorkflowSuggestions:
     def test_run_sync_creates_suggestion_for_weak_nonfinancial_run(self, db_session, monkeypatch):
+        import shiso.scraper.database as database_mod
         import shiso.scraper.services.sync as sync_module
         from shiso.scraper.agent.scraper import ScrapeMetrics, ScrapeResult
         from shiso.scraper.models.accounts import ScraperLogin
 
         session_factory = _session_factory(db_session)
         monkeypatch.setattr(sync_module, "SessionLocal", session_factory)
+        monkeypatch.setattr(database_mod, "SessionLocal", session_factory)
         monkeypatch.setattr(workflow_drafts, "SessionLocal", session_factory)
+
+        # Seed sync types so FK constraints are satisfied
+        for key, (name, desc) in BUILTIN_SYNC_TYPES.items():
+            db_session.add(SyncTypeRecord(key=key, name=name, description=desc))
+        db_session.flush()
 
         login = ScraperLogin(
             provider_key="zillow",

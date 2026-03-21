@@ -140,6 +140,10 @@ class ScraperLogin(Base):
     last_sync_snapshot_count: Mapped[Optional[int]] = mapped_column(Integer)
     last_auth_status: Mapped[Optional[str]] = mapped_column(String)  # authenticated | needs_2fa | login_failed
     last_auth_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    needs_full_sync: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_full_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_balance_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_statements_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -156,6 +160,7 @@ class ScraperLoginSyncRun(Base):
     scraper_login_id: Mapped[int] = mapped_column(ForeignKey("scraper_logins.id", ondelete="CASCADE"), nullable=False)
     provider_key: Mapped[str] = mapped_column(String, nullable=False)
     account_filter: Mapped[Optional[str]] = mapped_column(Text)
+    sync_type_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sync_types.id"), nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="running")
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
@@ -166,6 +171,7 @@ class ScraperLoginSyncRun(Base):
     metrics: Mapped[Optional[dict]] = mapped_column(JSON)
 
     scraper_login: Mapped["ScraperLogin"] = relationship(back_populates="sync_runs", passive_deletes=True)
+    sync_type: Mapped[Optional["SyncTypeRecord"]] = relationship()
 
 
 class ProviderMapping(Base):

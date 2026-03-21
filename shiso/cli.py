@@ -29,6 +29,7 @@ def scrape(
     statements: bool = typer.Option(False, "--statements", help="Download statement PDFs"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="Pause for 2FA/CAPTCHA instead of skipping"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Filter to specific account name or mask"),
+    sync_type: str = typer.Option("auto", "--sync-type", "-t", help="Sync type: auto, full, balance, statements"),
     agent_llm: Optional[str] = typer.Option(None, "--agent-llm", help="LLM preset for browser agent"),
     analyst_llm: Optional[str] = typer.Option("openrouter", "--analyst-llm", help="LLM preset for analyst"),
 ) -> None:
@@ -41,12 +42,14 @@ def scrape(
     if analyst_llm:
         os.environ["ANALYST_LLM"] = analyst_llm
 
+    from shiso.scraper.models.sync_type import SyncType
     from shiso.scraper.agent.run import main as run_main
     asyncio.run(run_main(
         targets=targets or None,
         download_statements=statements,
         interactive=interactive,
         account_filter=account,
+        sync_type=SyncType(sync_type),
     ))
 
 

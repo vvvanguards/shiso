@@ -316,6 +316,20 @@ class AccountListOutput(BaseModel):
     verdict_reason: str | None = None
 
 
+class BalanceUpdateItem(BaseModel):
+    card_name: str = ""
+    account_mask: str | None = None
+    current_balance: float | None = None
+    due_date: str | None = None
+    minimum_payment: float | None = None
+
+
+class BalanceUpdateOutput(BaseModel):
+    accounts: list[BalanceUpdateItem]
+    verdict: Literal["success", "blocked_2fa", "blocked_login", "blocked_other", "needs_login"] | None = None
+    verdict_reason: str | None = None
+
+
 class TenantLead(BaseModel):
     name: str
     email: str | None = None
@@ -329,6 +343,14 @@ class TenantLead(BaseModel):
 class TenantLeadList(BaseModel):
     leads: list[TenantLead]
 
+
+BALANCE_UPDATE_SCHEMA_SPEC = [
+    _spec("card_name", "str", default=""),
+    _spec("account_mask", "str", nullable=True),
+    _spec("current_balance", "float", nullable=True),
+    _spec("due_date", "str", nullable=True),
+    _spec("minimum_payment", "float", nullable=True),
+]
 
 ACCOUNT_OUTPUT_SCHEMA_SPEC = [
     _spec("card_name", "str", default=""),
@@ -441,4 +463,41 @@ Scroll through ALL pages of leads. Do NOT stop until you have checked for pagina
 and extracted every lead visible.
 
 Return all leads as structured output.""",
+))
+
+BALANCE_UPDATE_WORKFLOW = register(Workflow(
+    key="balance_update",
+    name="Balance Update (Fast Sync)",
+    description="Quick balance/payment scrape for already-known accounts — skips discovery and detail enrichment.",
+    output_schema=BalanceUpdateOutput,
+    result_key="accounts",
+    schema_spec=BALANCE_UPDATE_SCHEMA_SPEC,
+    prompt_template="""\
+You are on the account dashboard page. Your ONLY job is to read the current \
+balance, due date, and minimum payment for the accounts listed below. \
+Do NOT navigate to other pages, do NOT discover new accounts, do NOT click \
+into account detail pages.
+
+If you are NOT on the dashboard (e.g. you see a login page, security challenge, \
+or redirect), set verdict to "needs_login" and stop immediately.
+
+For each known account below, extract:
+- card_name: Display name of the account/card
+- account_mask: Last 4-5 digits (match to the known accounts)
+- current_balance: Current/outstanding balance amount
+- due_date: Payment due date in YYYY-MM-DD format
+- minimum_payment: Minimum payment amount due
+
+Known accounts to look for:
+{{ known_accounts }}
+
+Return all matched accounts as structured output.
+
+IMPORTANT: Before calling done, set:
+- verdict: "success" if you extracted balances, OR
+  - "needs_login" if you landed on a login/auth page instead of the dashboard
+  - "blocked_2fa" if a 2FA/verification prompt appeared
+  - "blocked_login" if credentials failed
+  - "blocked_other" for any other issue
+- verdict_reason: Brief explanation""",
 ))

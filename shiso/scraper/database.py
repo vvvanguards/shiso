@@ -70,6 +70,7 @@ def _import_models() -> None:
         ScraperLogin,
         ScraperLoginSyncRun,
     )
+    from .models.sync_type import SyncTypeRecord  # noqa: F401
     from .models.tools import (  # noqa: F401
         ProviderPlaybookRecord,
         ToolRunOutput,
@@ -141,6 +142,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _apply_lightweight_schema_updates()
     _seed_account_types()
+    _seed_sync_types()
     _seed_builtin_workflows()
 
     with SessionLocal() as session:
@@ -159,6 +161,7 @@ def reset_db() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     _seed_account_types()
+    _seed_sync_types()
     _seed_builtin_workflows()
 
 
@@ -173,6 +176,21 @@ def _apply_lightweight_schema_updates() -> None:
             conn.execute(text("ALTER TABLE scraper_login_sync_runs ADD COLUMN account_filter TEXT"))
         if "agent_log_path" not in sync_run_columns:
             conn.execute(text("ALTER TABLE scraper_login_sync_runs ADD COLUMN agent_log_path TEXT"))
+        if "sync_type_id" not in sync_run_columns:
+            conn.execute(text("ALTER TABLE scraper_login_sync_runs ADD COLUMN sync_type_id INTEGER REFERENCES sync_types(id)"))
+
+        login_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(scraper_logins)")).fetchall()
+        }
+        if "needs_full_sync" not in login_columns:
+            conn.execute(text("ALTER TABLE scraper_logins ADD COLUMN needs_full_sync BOOLEAN DEFAULT 0"))
+        if "last_full_sync_at" not in login_columns:
+            conn.execute(text("ALTER TABLE scraper_logins ADD COLUMN last_full_sync_at DATETIME"))
+        if "last_balance_sync_at" not in login_columns:
+            conn.execute(text("ALTER TABLE scraper_logins ADD COLUMN last_balance_sync_at DATETIME"))
+        if "last_statements_sync_at" not in login_columns:
+            conn.execute(text("ALTER TABLE scraper_logins ADD COLUMN last_statements_sync_at DATETIME"))
 
 
 def _seed_account_types() -> None:
@@ -187,6 +205,23 @@ def _seed_account_types() -> None:
                     existing.balance_type = balance_type
             else:
                 session.add(FinancialAccountType(name=name, balance_type=balance_type))
+        session.commit()
+
+
+def _seed_sync_types() -> None:
+    """Ensure all builtin sync types exist in the database."""
+    from .models.sync_type import BUILTIN_SYNC_TYPES, SyncTypeRecord
+
+    with Session(engine) as session:
+        for idx, (key, (name, description)) in enumerate(BUILTIN_SYNC_TYPES.items()):
+            existing = session.query(SyncTypeRecord).filter_by(key=key).first()
+            if existing:
+                existing.name = name
+                existing.description = description
+            else:
+                session.add(SyncTypeRecord(
+                    key=key, name=name, description=description, sort_order=idx,
+                ))
         session.commit()
 
 

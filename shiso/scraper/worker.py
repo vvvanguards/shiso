@@ -15,6 +15,7 @@ from datetime import datetime
 from .agent.run import load_accounts
 from .database import SessionLocal, init_db
 from .models.accounts import ScraperLogin, ScraperLoginSyncRun
+from .models.sync_type import SyncType, SyncTypeRecord
 from .services.accounts_db import AccountsDB
 from .services.sync import run_sync
 from .tools import get_workflow
@@ -104,6 +105,15 @@ async def execute_run(run_id: int) -> None:
     except Exception:
         logger.debug("Agent sessions not available, running without human-in-the-loop", exc_info=True)
 
+    # Resolve sync type from the queued run (dashboard may have set it)
+    queued_sync_type = SyncType.auto
+    with SessionLocal() as session:
+        db_run_check = session.get(ScraperLoginSyncRun, run_id)
+        if db_run_check and db_run_check.sync_type_id:
+            st_record = session.get(SyncTypeRecord, db_run_check.sync_type_id)
+            if st_record and st_record.key in SyncType.__members__:
+                queued_sync_type = SyncType(st_record.key)
+
     # Resolve workflow from login's tool_key
     with SessionLocal() as session:
         login_obj = session.get(ScraperLogin, login_id)
@@ -151,6 +161,7 @@ async def execute_run(run_id: int) -> None:
             account_filter=account_filter,
             workflow=workflow,
             human_input_handler=human_input_handler,
+            sync_type=queued_sync_type,
         )
         if complete_session:
             try:
