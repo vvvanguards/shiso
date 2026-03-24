@@ -1,8 +1,8 @@
 You are on the {{ institution }} dashboard.
-Navigate to the account "{{ card_name }}"{{ mask_hint }} and extract detailed information.
+Navigate to the account "{{ account_name }}"{{ mask_hint }} and extract detailed information.
 
 Steps:
-1. Click on the account named "{{ card_name }}" to open its details
+1. Click on the account named "{{ account_name }}" to open its details
 2. Look for promotional APR information (intro APR, promo end date, regular APR after promo)
 3. Find the credit limit or spending power
 4. Find the current interest rate/APR

@@ -34,7 +34,7 @@ BASELINE_PROVIDERS = [
     {"domain_pattern": "americanexpress.com", "provider_key": "amex", "label": "Amex", "account_type": "Credit Card"},
     {"domain_pattern": "citi.com", "provider_key": "citi", "label": "Citi", "account_type": "Credit Card"},
     {"domain_pattern": "citicards.com", "provider_key": "citi", "label": "Citi", "account_type": "Credit Card"},
-    {"domain_pattern": "capitalone.com", "provider_key": "capital_one", "label": "Capital One", "account_type": "Credit Card"},
+    {"domain_pattern": "capitalone.com", "provider_key": "capital_one", "label": "Capital One", "account_type": "Financial"},
     {"domain_pattern": "discover.com", "provider_key": "discover", "label": "Discover", "account_type": "Credit Card"},
     {"domain_pattern": "barclays.com", "provider_key": "barclays", "label": "Barclays", "account_type": "Credit Card"},
     {"domain_pattern": "bfrb.bankofamerica.com", "provider_key": "bofa", "label": "Bank of America", "account_type": "Credit Card"},
@@ -103,6 +103,9 @@ class SnapshotView:
     last_payment_date: str | None
     credit_limit: float | None
     interest_rate: float | None
+    is_paid: bool | None
+    paid_date: str | None
+    autopay_enabled: bool | None
     account_subcategory: str
     account_category: str
     balance_type: str
@@ -163,6 +166,9 @@ class AccountsDB:
                         intro_apr_rate=row.get("intro_apr_rate"),
                         intro_apr_end_date=row.get("intro_apr_end_date"),
                         regular_apr=row.get("regular_apr"),
+                        is_paid=row.get("is_paid"),
+                        paid_date=row.get("paid_date"),
+                        autopay_enabled=row.get("autopay_enabled"),
                         raw_extracted_json=row,
                     )
                 )
@@ -613,6 +619,35 @@ class AccountsDB:
             account = (
                 session.query(FinancialAccount)
                 .filter_by(provider_key=provider_key, account_mask=account_mask)
+                .first()
+            )
+
+        # Mask suffix match: the agent may extract different-length masks across
+        # runs (e.g. "690050" vs "7935690050").  If the shorter is a suffix of
+        # the longer and the display_name matches, treat them as the same account.
+        if not account and account_mask and display_name:
+            candidates = (
+                session.query(FinancialAccount)
+                .filter_by(provider_key=provider_key, display_name=display_name)
+                .all()
+            )
+            for cand in candidates:
+                cand_mask = _normalize_mask(cand.account_mask) or ""
+                if not cand_mask:
+                    continue
+                if cand_mask.endswith(account_mask) or account_mask.endswith(cand_mask):
+                    account = cand
+                    break
+
+        # Display-name fallback — only when the incoming row has NO mask.
+        # Providers like utilities use address as the stable identifier and
+        # may not always return a mask.  When a mask IS present, we rely on
+        # the suffix-match above to avoid merging distinct cards that share
+        # the same display name (e.g. multiple "WELLS FARGO REWARDS").
+        if not account and display_name and not account_mask:
+            account = (
+                session.query(FinancialAccount)
+                .filter_by(provider_key=provider_key, display_name=display_name)
                 .first()
             )
 
@@ -1135,7 +1170,7 @@ class AccountsDB:
             .first()
         )
         raw = latest_snapshot.raw_extracted_json if latest_snapshot else {}
-        name = _normalize_text(raw.get("card_name") or account.display_name)
+        name = _normalize_text(raw.get("account_name") or raw.get("card_name") or account.display_name)
         address = _normalize_text(raw.get("address") or account.address)
         if name and address:
             return (account.provider_key, "name_address", f"{name}|{address}")
@@ -1250,7 +1285,7 @@ def _snapshot_view_from_values(
         provider_key=provider_key,
         institution=institution,
         scraper_login_id=scraper_login_id,
-        display_name=row.get("card_name") or account.display_name,
+        display_name=row.get("account_name") or row.get("card_name") or account.display_name,
         account_number=account.account_number,
         account_mask=account.account_mask,
         address=account.address,
@@ -1263,6 +1298,9 @@ def _snapshot_view_from_values(
         last_payment_date=row.get("last_payment_date"),
         credit_limit=row.get("credit_limit"),
         interest_rate=row.get("interest_rate") or row.get("regular_apr"),
+        is_paid=row.get("is_paid"),
+        paid_date=row.get("paid_date"),
+        autopay_enabled=row.get("autopay_enabled"),
         account_subcategory=category,
         account_category=category,
         balance_type=balance_type,
@@ -1290,8 +1328,8 @@ def _infer_active(status: Optional[str]) -> bool:
 
 
 def _infer_display_name(row: dict, institution: str) -> str:
-    name = row.get("card_name") or row.get("label") or row.get("address") or institution
-    # Clean up common noise from scraped card names
+    name = row.get("account_name") or row.get("card_name") or row.get("label") or row.get("address") or institution
+    # Clean up common noise from scraped account names
     name = re.sub(r"[®™�]", "", name)
     name = re.sub(r"\(TM\)", "", name, flags=re.IGNORECASE)
     name = re.sub(r"^American Express\s+", "", name)
@@ -1367,7 +1405,7 @@ def _infer_account_category(provider_key: str, row: dict) -> str:
 
     text = " ".join(
         str(value)
-        for value in [row.get("card_name"), row.get("label"), row.get("status"), row.get("address")]
+        for value in [row.get("account_name") or row.get("card_name"), row.get("label"), row.get("status"), row.get("address")]
         if value
     ).lower()
 

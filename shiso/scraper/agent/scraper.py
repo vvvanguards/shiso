@@ -382,8 +382,9 @@ def _is_generic_account_name(name: str | None) -> bool:
 
 def _account_key(account: dict[str, Any]) -> str:
     mask = _normalize_mask(account.get("account_mask"))
-    name = (account.get("card_name") or "").strip()
+    name = (account.get("account_name") or "").strip()
     address = (account.get("address") or "").strip()
+    acct_type = (account.get("account_type") or "").strip()
 
     if mask and name and not _is_generic_account_name(name):
         return f"mask:{mask}|name:{name}"
@@ -391,6 +392,8 @@ def _account_key(account: dict[str, Any]) -> str:
         return f"mask:{mask}"
     if name and address:
         return f"name:{name}|addr:{address}"
+    if name and acct_type:
+        return f"name:{name}|type:{acct_type}"
     if name:
         return f"name:{name}"
     return f"unknown:{id(account)}"
@@ -410,20 +413,27 @@ def _normalize_name(name: str | None) -> str:
 def _find_matching_key(collected: dict[str, dict], account: dict) -> str | None:
     """Find if account already exists under a different key."""
     mask = _normalize_mask(account.get("account_mask"))
-    name = _normalize_name(account.get("card_name"))
+    name = _normalize_name(account.get("account_name"))
 
     for key, existing in collected.items():
         if mask and _normalize_mask(existing.get("account_mask")) == mask:
             return key
-        if name and not _is_generic_account_name(account.get("card_name")):
-            if _normalize_name(existing.get("card_name")) == name:
+        if name and not _is_generic_account_name(account.get("account_name")):
+            if _normalize_name(existing.get("account_name")) == name:
+                # Only merge by name if neither has a mask, or masks match.
+                # Two accounts with the same name but different masks are
+                # distinct (e.g. two Capital One savings accounts).
+                incoming_mask = mask
+                existing_mask = _normalize_mask(existing.get("account_mask"))
+                if incoming_mask and existing_mask and incoming_mask != existing_mask:
+                    continue
                 return key
     return None
 
 
 def _merge_account(existing: dict, incoming: dict) -> dict:
     merged = dict(existing)
-    for field in ("card_name", "account_mask", "current_balance", "statement_balance",
+    for field in ("account_name", "account_mask", "current_balance", "statement_balance",
                   "due_date", "minimum_payment", "last_payment_amount",
                   "last_payment_date", "credit_limit", "interest_rate",
                   "account_type", "address"):
@@ -443,8 +453,8 @@ def _merge_account(existing: dict, incoming: dict) -> dict:
         merged["account_mask"] = incoming["account_mask"]
 
     # Prefer specific names over generic
-    if _is_generic_account_name(merged.get("card_name")) and not _is_generic_account_name(incoming.get("card_name")):
-        merged["card_name"] = incoming.get("card_name")
+    if _is_generic_account_name(merged.get("account_name")) and not _is_generic_account_name(incoming.get("account_name")):
+        merged["account_name"] = incoming.get("account_name")
 
     return merged
 
@@ -637,7 +647,7 @@ async def _enrich_account_details(
             skip_types.update(t.strip() for t in tip.split(":", 1)[1].split(","))
 
     for acct in accounts:
-        card_name = acct.get("card_name", "unknown")
+        account_name = acct.get("account_name", "unknown")
         mask = acct.get("account_mask", "")
         mask_hint = f" ending in {mask}" if mask else ""
 
@@ -645,16 +655,16 @@ async def _enrich_account_details(
         acct_type = (acct.get("account_type") or "").lower().replace(" ", "_")
         if acct_type and acct_type in skip_types:
             if on_log:
-                on_log(f"[{provider_key}] Skipping enrichment for {card_name} (type: {acct_type})")
+                on_log(f"[{provider_key}] Skipping enrichment for {account_name} (type: {acct_type})")
             continue
 
         if on_log:
-            on_log(f"[{provider_key}] Enriching details for {card_name}{mask_hint}...")
+            on_log(f"[{provider_key}] Enriching details for {account_name}{mask_hint}...")
 
         task = render_prompt(
             "enrich_details.md",
             institution=institution,
-            card_name=card_name,
+            account_name=account_name,
             mask_hint=mask_hint,
         )
 
@@ -694,13 +704,13 @@ async def _enrich_account_details(
                     if on_log:
                         enriched = [f for f in detail if detail[f] is not None]
                         if enriched:
-                            on_log(f"[{provider_key}] Enriched {card_name}: {', '.join(enriched)}")
+                            on_log(f"[{provider_key}] Enriched {account_name}: {', '.join(enriched)}")
                 except (json.JSONDecodeError, TypeError):
                     pass  # Keep existing values if parse fails
         except Exception as exc:
-            logger.warning("[%s] Detail enrichment failed for %s: %s", provider_key, card_name, exc)
+            logger.warning("[%s] Detail enrichment failed for %s: %s", provider_key, account_name, exc)
             if on_log:
-                on_log(f"[{provider_key}] Detail enrichment skipped for {card_name}: {exc}")
+                on_log(f"[{provider_key}] Detail enrichment skipped for {account_name}: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -752,12 +762,12 @@ async def _download_statements(
     )
 
     for acct in eligible:
-        card_name = acct.get("card_name", "unknown")
+        account_name = acct.get("account_name", "unknown")
         mask = acct.get("account_mask", "")
         mask_hint = f" ending in {mask}" if mask else ""
 
         if on_log:
-            on_log(f"[{provider_key}]Downloading statement for {card_name}{mask_hint}...")
+            on_log(f"[{provider_key}]Downloading statement for {account_name}{mask_hint}...")
 
         # Snapshot existing PDFs before this account's download
         before_pdfs = set(download_dir.glob("*.pdf"))
@@ -765,7 +775,7 @@ async def _download_statements(
         task = render_prompt(
             "download_statement.md",
             institution=institution,
-            card_name=card_name,
+            account_name=account_name,
             mask_hint=mask_hint,
         )
 
@@ -795,9 +805,9 @@ async def _download_statements(
                 except json.JSONDecodeError:
                     pass
         except Exception as exc:
-            logger.warning("[%s] Statement extraction failed for %s: %s", provider_key, card_name, exc)
+            logger.warning("[%s] Statement extraction failed for %s: %s", provider_key, account_name, exc)
             if on_log:
-                on_log(f"[{provider_key}] Failed to extract from statement for {card_name}: {exc}")
+                on_log(f"[{provider_key}] Failed to extract from statement for {account_name}: {exc}")
             continue
 
         # Check for downloaded PDFs (fallback)
@@ -809,7 +819,7 @@ async def _download_statements(
             size = pdf_path.stat().st_size
 
             # Rename immediately with account info
-            product_slug = re.sub(r"[^\w]+", "_", card_name).strip("_").lower()[:30]
+            product_slug = re.sub(r"[^\w]+", "_", account_name).strip("_").lower()[:30]
             parts = [product_slug]
             if mask:
                 parts.append(mask)
@@ -829,7 +839,7 @@ async def _download_statements(
                 on_log(f"[{provider_key}] Downloaded: {pdf_path.name} ({size:,} bytes)")
 
         downloaded.append({
-            "card_name": card_name,
+            "account_name": account_name,
             "account_mask": mask,
             "file_path": file_path,
             "extracted_data": agent_result,
@@ -940,7 +950,7 @@ def _persist_statement(
     from ..models.accounts import FinancialAccount
 
     mask = matched_acct.get("account_mask", "")
-    card_name = matched_acct.get("card_name", "")
+    account_name = matched_acct.get("account_name", "")
 
     # Find the FinancialAccount by mask or display_name
     with SessionLocal() as session:
@@ -951,16 +961,16 @@ def _persist_statement(
                 .filter_by(provider_key=provider_key, account_mask=mask)
                 .first()
             )
-        if not db_account and card_name:
+        if not db_account and account_name:
             db_account = (
                 session.query(FinancialAccount)
-                .filter_by(provider_key=provider_key, display_name=card_name)
+                .filter_by(provider_key=provider_key, display_name=account_name)
                 .first()
             )
 
     if not db_account:
         if on_log:
-            on_log(f"[{provider_key}] No DB account for {card_name} ({mask}) — skipping statement persist")
+            on_log(f"[{provider_key}] No DB account for {account_name} ({mask}) — skipping statement persist")
         return
 
     # Derive statement_month from statement_date or filename
@@ -994,7 +1004,7 @@ def _persist_statement(
     )
 
     if on_log:
-        on_log(f"[{provider_key}] Saved statement for {card_name} ({statement_month})")
+        on_log(f"[{provider_key}] Saved statement for {account_name} ({statement_month})")
 
 
 def _provider_cookie_domains(config: dict[str, Any]) -> list[str]:
@@ -1034,7 +1044,7 @@ def _load_known_accounts_as_dicts(provider_key: str, logins: list[dict]) -> list
             for acct in accounts:
                 login_id = acct.scraper_login_id if acct.scraper_login_id in login_ids else (login_ids[0] if login_ids else None)
                 result.append({
-                    "card_name": acct.display_name or "",
+                    "account_name": acct.display_name or "",
                     "account_mask": acct.account_mask or "",
                     "account_number": acct.account_number or "",
                     "provider": provider_key,
@@ -1044,6 +1054,20 @@ def _load_known_accounts_as_dicts(provider_key: str, logins: list[dict]) -> list
             return result
     except Exception:
         return []
+
+
+def _set_needs_full_sync(login_id: int, value: bool = True) -> None:
+    """Flag a login as needing a full sync on the next auto-resolved run."""
+    try:
+        from ..database import SessionLocal
+        from ..models.accounts import ScraperLogin
+        with SessionLocal() as session:
+            login = session.get(ScraperLogin, login_id)
+            if login:
+                login.needs_full_sync = value
+                session.commit()
+    except Exception:
+        pass
 
 
 def _load_known_accounts_text(provider_key: str) -> str:
@@ -1099,7 +1123,7 @@ async def scrape_provider(
     - ``balance``: balance-only for known accounts (skips enrichment, statements, assessment)
     - ``statements``: loads known accounts from DB, skips agent scrape, goes straight to Pass 2
 
-    If account_filter is provided, only process matching accounts (by card_name or account_mask).
+    If account_filter is provided, only process matching accounts (by account_name or account_mask).
     """
     config = _load_config()
     browser_cfg = config["browser"]
@@ -1150,6 +1174,13 @@ async def scrape_provider(
         start_url: str = ""
         dashboard_url: str | None = str(provider_cfg.get("dashboard_url") or "").strip() or None
 
+        # Resolve workflow up front — needed for orchestration gates after the login loop.
+        from ..tools.workflows import get_workflow as _get_wf, FINANCIAL_WORKFLOW
+        if sync_type == SyncType.balance:
+            active_wf = BALANCE_UPDATE_WORKFLOW
+        else:
+            active_wf = workflow or _get_wf("financial_scraper") or FINANCIAL_WORKFLOW
+
         # Statements-only: skip Pass 1 entirely — load known accounts from DB
         if sync_type == SyncType.statements:
             all_accounts = _load_known_accounts_as_dicts(provider_key, logins)
@@ -1182,22 +1213,17 @@ async def scrape_provider(
             if on_log:
                 on_log(f"[{provider_key}] Scraping as {label} ({sync_type.value})...")
 
-            # Resolve workflow — default to financial_scraper
-            from ..tools.workflows import get_workflow as _get_wf, FINANCIAL_WORKFLOW
+            # Build task from active workflow
             if sync_type == SyncType.balance:
-                active_wf = BALANCE_UPDATE_WORKFLOW
                 known_accounts_text = _load_known_accounts_text(provider_key)
-                # Render the balance_update prompt with known accounts
                 prompt_with_accounts = active_wf.prompt_template.replace(
                     "{{ known_accounts }}", known_accounts_text,
                 )
-                # Build a balance-sync task: lightweight preamble + balance prompt
                 institution = provider_cfg.get("institution", provider_key.replace("_", " ").title())
                 preamble = render_prompt("fast_sync_preamble.md", institution=institution, dashboard_url=dashboard_url)
                 task = preamble + "\n\n" + prompt_with_accounts
                 output_schema = active_wf.output_schema
             else:
-                active_wf = workflow or _get_wf("financial_scraper") or FINANCIAL_WORKFLOW
                 output_schema = active_wf.output_schema
                 task = _build_task(
                     provider_key,
@@ -1303,14 +1329,14 @@ async def scrape_provider(
                     if on_log:
                         on_log(f"[{provider_key}] Pass 1: found {len(login_accounts)} item(s)")
 
-                    if active_wf.key not in ("financial_scraper", "balance_update"):
-                        # Non-financial workflows: store raw results directly
+                    if not active_wf.dedup_enabled:
+                        # Non-dedup workflows: store raw results directly
                         for item in login_accounts:
                             item.setdefault("provider", provider_key)
                             item.setdefault("login_id", login_id)
                         all_accounts.extend(login_accounts)
                     else:
-                        # Financial scraper: merge/dedup accounts
+                        # Dedup-enabled workflow: merge/dedup accounts
                         collected: dict[str, dict] = {}
                         added, total = _merge_accounts(
                             collected, login_accounts,
@@ -1332,8 +1358,8 @@ async def scrape_provider(
                         if learned:
                             dashboard_url = learned
 
-                # Determine auth status — LLM assessment only for full syncs
-                if sync_type != SyncType.full:
+                # Determine auth status — LLM assessment only for full syncs with assessment enabled
+                if sync_type != SyncType.full or not active_wf.assessment_enabled:
                     if login_accounts:
                         _update_auth_status(login_id, "authenticated")
                         if on_log:
@@ -1390,13 +1416,13 @@ async def scrape_provider(
             filter_normalized = _normalize_mask(filter_lower)
             filtered = []
             for acct in all_accounts:
-                card_name = (acct.get("card_name") or "").lower()
+                account_name = (acct.get("account_name") or "").lower()
                 mask = (acct.get("account_mask") or "").lower()
                 mask_normalized = _normalize_mask(mask)
                 address = (acct.get("address") or "").lower()
                 if address and address == filter_lower:
                     filtered.append(acct)
-                elif filter_lower in card_name or (mask_normalized and filter_normalized == mask_normalized):
+                elif filter_lower in account_name or (mask_normalized and filter_normalized == mask_normalized):
                     filtered.append(acct)
             if filtered:
                 if on_log:
@@ -1408,8 +1434,8 @@ async def scrape_provider(
                 all_accounts.clear()
 
         # --- Pass 1.5: enrich account details (promo APR, credit limit) ---
-        # Only runs for full syncs.
-        if all_accounts and sync_type == SyncType.full:
+        # Only runs for full syncs when enrichment is enabled on the workflow.
+        if all_accounts and sync_type == SyncType.full and active_wf.enrichment_enabled:
             enrich_details = provider_cfg.get("enrich_details", agent_cfg.get("enrich_details", True))
             if enrich_details:
                 if on_log:
@@ -1430,7 +1456,7 @@ async def scrape_provider(
         # --- Pass 2: download statement PDFs and extract billing data ---
         # Runs for full and statements sync types.
         # Persist accounts first so statement matching can find them in the DB
-        if download_statements and all_accounts and accounts_db and sync_type in (SyncType.full, SyncType.statements):
+        if download_statements and all_accounts and accounts_db and active_wf.statement_download_enabled and sync_type in (SyncType.full, SyncType.statements):
             accounts_db.save_scrape_results(provider_key, all_accounts)
             if on_log:
                 on_log(f"[{provider_key}] Pass 2: downloading statements...")
@@ -1464,23 +1490,23 @@ async def scrape_provider(
                     from .llm import llm_chat
                     stmt_data = await extract_statement_data(file_path, llm_chat)
                     if on_log:
-                        card_name = dl.get("card_name", "unknown")
-                        on_log(f"[{provider_key}] PDF parsed for {card_name}")
+                        account_name = dl.get("account_name", "unknown")
+                        on_log(f"[{provider_key}] PDF parsed for {account_name}")
 
                 if not stmt_data:
                     continue
 
                 # Find the matching account
-                card_name = dl.get("card_name", "")
+                account_name = dl.get("account_name", "")
                 mask = dl.get("account_mask", "")
                 matched_acct = None
                 for acct in all_accounts:
                     if mask and acct.get("account_mask") == mask:
                         matched_acct = acct
                         break
-                if not matched_acct and card_name:
+                if not matched_acct and account_name:
                     for acct in all_accounts:
-                        if acct.get("card_name") == card_name:
+                        if acct.get("account_name") == account_name:
                             matched_acct = acct
                             break
 
@@ -1506,9 +1532,9 @@ async def scrape_provider(
 
                     if on_log:
                         filled = [k for k, v in stmt_data.items() if v is not None]
-                        on_log(f"[{provider_key}] Statement enriched {card_name}: {', '.join(filled)}")
+                        on_log(f"[{provider_key}] Statement enriched {account_name}: {', '.join(filled)}")
                 elif on_log:
-                    on_log(f"[{provider_key}] Statement for {card_name} — no matching account found")
+                    on_log(f"[{provider_key}] Statement for {account_name} — no matching account found")
 
             if on_log:
                 on_log(f"[{provider_key}] Processed {len(statement_results)} statement(s)")

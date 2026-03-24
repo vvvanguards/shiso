@@ -1,8 +1,8 @@
 You are on the {{ institution }} dashboard.
-Open the most recent BILLING STATEMENT for this account: {{ card_name }}{{ mask_hint }}
+Open the most recent BILLING STATEMENT for this account: {{ account_name }}{{ mask_hint }}
 
 Steps:
-1. Click on the account named "{{ card_name }}" to open it
+1. Click on the account named "{{ account_name }}" to open it
 2. Find "Statements & Activity" or "Statements" link/tab and click it
 3. Find the most recent monthly billing statement (has a date like "Feb 26, 2026")
 4. Click to view/open the statement — it may open in browser or download

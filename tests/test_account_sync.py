@@ -139,12 +139,12 @@ def test_scrape_provider_applies_account_filter_without_crashing(monkeypatch):
             return output_schema(
                 accounts=[
                     {
-                        "card_name": "Blue Business Cash",
+                        "account_name": "Blue Business Cash",
                         "account_mask": "71005",
                         "account_type": "credit_card",
                     },
                     {
-                        "card_name": "Gold Card",
+                        "account_name": "Gold Card",
                         "account_mask": "61005",
                         "account_type": "credit_card",
                     },
@@ -250,12 +250,12 @@ def test_scrape_provider_account_filter_no_match_returns_empty(monkeypatch):
             return output_schema(
                 accounts=[
                     {
-                        "card_name": "Blue Business Cash",
+                        "account_name": "Blue Business Cash",
                         "account_mask": "71005",
                         "account_type": "credit_card",
                     },
                     {
-                        "card_name": "Gold Card",
+                        "account_name": "Gold Card",
                         "account_mask": "61005",
                         "account_type": "credit_card",
                     },
@@ -337,3 +337,85 @@ def test_worker_process_command_invokes_module():
     command = worker._worker_process_command()
 
     assert command[-2:] == ["-m", "shiso.scraper.worker"]
+
+
+# ---------------------------------------------------------------------------
+# Agent-level dedup tests
+# ---------------------------------------------------------------------------
+
+class TestAccountDedup:
+    """Tests for _account_key, _find_matching_key, and _merge_accounts."""
+
+    def test_same_name_different_masks_not_merged(self):
+        from shiso.scraper.agent.scraper import _merge_accounts
+
+        collected: dict[str, dict] = {}
+        raw_accounts = [
+            {"account_name": "360 Performance Savings", "account_mask": "5599", "account_type": "savings"},
+            {"account_name": "360 Performance Savings", "account_mask": "7701", "account_type": "savings"},
+        ]
+        added, total = _merge_accounts(
+            collected, raw_accounts,
+            provider_key="capital_one", label="CapOne", login_id=1,
+        )
+        assert total == 2, f"Expected 2 distinct accounts, got {total}"
+        assert added == 2
+
+    def test_same_mask_merged(self):
+        from shiso.scraper.agent.scraper import _merge_accounts
+
+        collected: dict[str, dict] = {}
+        raw_accounts = [
+            {"account_name": "Gold Card", "account_mask": "1001", "current_balance": 100.0},
+            {"account_name": "Gold Card", "account_mask": "1001", "current_balance": 200.0},
+        ]
+        added, total = _merge_accounts(
+            collected, raw_accounts,
+            provider_key="amex", label="Amex", login_id=1,
+        )
+        assert total == 1, f"Expected 1 merged account, got {total}"
+        # Balance should be updated to the latest value
+        account = list(collected.values())[0]
+        assert account["current_balance"] == 200.0
+
+    def test_generic_names_collapse_regardless_of_mask(self):
+        from shiso.scraper.agent.scraper import _merge_accounts
+
+        collected: dict[str, dict] = {}
+        raw_accounts = [
+            {"account_name": "Account", "current_balance": 50.0},
+            {"account_name": "Account", "current_balance": 75.0},
+        ]
+        added, total = _merge_accounts(
+            collected, raw_accounts,
+            provider_key="test", label="Test", login_id=1,
+        )
+        # Generic names without masks get the same key, so they merge
+        assert total == 1
+
+    def test_account_type_differentiates_name_only_keys(self):
+        from shiso.scraper.agent.scraper import _account_key
+
+        acct_a = {"account_name": "Primary", "account_type": "checking"}
+        acct_b = {"account_name": "Primary", "account_type": "savings"}
+        assert _account_key(acct_a) != _account_key(acct_b)
+
+    def test_mask_always_takes_priority_over_name(self):
+        from shiso.scraper.agent.scraper import _find_matching_key
+
+        collected = {
+            "mask:1001|name:Gold Card": {"account_name": "Gold Card", "account_mask": "1001"},
+        }
+        # Different mask but same name — should NOT match
+        incoming = {"account_name": "Gold Card", "account_mask": "2002"}
+        assert _find_matching_key(collected, incoming) is None
+
+    def test_no_mask_same_name_merges(self):
+        from shiso.scraper.agent.scraper import _find_matching_key
+
+        collected = {
+            "name:duke energy": {"account_name": "Duke Energy"},
+        }
+        # Same name, neither has mask — should merge
+        incoming = {"account_name": "Duke Energy"}
+        assert _find_matching_key(collected, incoming) == "name:duke energy"

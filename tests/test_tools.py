@@ -80,25 +80,26 @@ class TestFinancialWorkflow:
 
     def test_prompt_template_contains_instructions(self):
         assert "CRITICAL" in FINANCIAL_WORKFLOW.prompt_template
-        assert "card_name" in FINANCIAL_WORKFLOW.prompt_template
+        assert "account_name" in FINANCIAL_WORKFLOW.prompt_template
         assert "account_mask" in FINANCIAL_WORKFLOW.prompt_template
 
     def test_output_schema_fields_match_original(self):
         expected_fields = {
-            "card_name", "account_mask", "current_balance", "statement_balance",
+            "account_name", "account_mask", "current_balance", "statement_balance",
             "due_date", "minimum_payment", "last_payment_amount",
             "last_payment_date", "credit_limit", "interest_rate",
             "intro_apr_rate", "intro_apr_end_date", "regular_apr",
             "promo_type", "account_type", "address",
+            "is_paid", "paid_date", "autopay_enabled",
         }
         assert set(AccountOutput.model_fields.keys()) == expected_fields
 
     def test_account_list_output_structure(self):
         data = AccountListOutput(accounts=[
-            AccountOutput(card_name="Test Card", current_balance=100.0),
+            AccountOutput(account_name="Test Card", current_balance=100.0),
         ])
         assert len(data.accounts) == 1
-        assert data.accounts[0].card_name == "Test Card"
+        assert data.accounts[0].account_name == "Test Card"
         dumped = data.model_dump()
         assert isinstance(dumped["accounts"], list)
 
@@ -457,8 +458,8 @@ class TestConfig:
 class TestGenericOutputExtraction:
     def test_financial_output_result_key(self):
         data = AccountListOutput(accounts=[
-            AccountOutput(card_name="Card A"),
-            AccountOutput(card_name="Card B"),
+            AccountOutput(account_name="Card A"),
+            AccountOutput(account_name="Card B"),
         ])
         dumped = data.model_dump()
         items = dumped.get(FINANCIAL_WORKFLOW.result_key, [])
@@ -472,6 +473,32 @@ class TestGenericOutputExtraction:
         dumped = data.model_dump()
         items = dumped.get(ZILLOW_LEADS_WORKFLOW.result_key, [])
         assert len(items) == 2
+
+
+class TestWorkflowOrchestrationFlags:
+    """Verify orchestration config on builtin workflows."""
+
+    def test_financial_workflow_flags(self):
+        assert FINANCIAL_WORKFLOW.persistence_strategy == "financial"
+        assert FINANCIAL_WORKFLOW.enrichment_enabled is True
+        assert FINANCIAL_WORKFLOW.statement_download_enabled is True
+        assert FINANCIAL_WORKFLOW.assessment_enabled is True
+        assert FINANCIAL_WORKFLOW.dedup_enabled is True
+
+    def test_balance_update_workflow_flags(self):
+        from shiso.scraper.tools.workflows import BALANCE_UPDATE_WORKFLOW
+        assert BALANCE_UPDATE_WORKFLOW.persistence_strategy == "financial"
+        assert BALANCE_UPDATE_WORKFLOW.enrichment_enabled is False
+        assert BALANCE_UPDATE_WORKFLOW.statement_download_enabled is False
+        assert BALANCE_UPDATE_WORKFLOW.assessment_enabled is False
+        assert BALANCE_UPDATE_WORKFLOW.dedup_enabled is True
+
+    def test_zillow_workflow_defaults_to_generic(self):
+        assert ZILLOW_LEADS_WORKFLOW.persistence_strategy == "generic"
+        assert ZILLOW_LEADS_WORKFLOW.enrichment_enabled is False
+        assert ZILLOW_LEADS_WORKFLOW.statement_download_enabled is False
+        assert ZILLOW_LEADS_WORKFLOW.assessment_enabled is False
+        assert ZILLOW_LEADS_WORKFLOW.dedup_enabled is False
 
 
 # ---------------------------------------------------------------------------

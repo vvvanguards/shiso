@@ -349,7 +349,7 @@ class TestScrapeProviderSyncType:
             def errors(self): return []
             def get_structured_output(self, schema):
                 return schema(accounts=[
-                    {"card_name": "Gold", "account_mask": "1001",
+                    {"account_name": "Gold", "account_mask": "1001",
                      "current_balance": 500.0},
                 ])
             def final_result(self): return None
@@ -417,7 +417,7 @@ class TestScrapeProviderSyncType:
             def errors(self): return []
             def get_structured_output(self, schema):
                 return schema(accounts=[
-                    {"card_name": "Gold", "account_mask": "1001",
+                    {"account_name": "Gold", "account_mask": "1001",
                      "account_type": "credit_card"},
                 ])
             def final_result(self): return None
