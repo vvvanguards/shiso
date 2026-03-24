@@ -1,10 +1,5 @@
 """
 Shared database configuration for Shiso.
-
-Schema is not yet finalized — use reset_db() to drop and recreate.
-
-TODO: Once the schema stabilizes, switch to Alembic migrations and
-      stop calling init_db()/create_all on every startup.
 """
 
 from pathlib import Path
@@ -135,12 +130,11 @@ BASELINE_PROVIDER_MAPPINGS = [
 
 
 def init_db() -> None:
-    """Create tables if they don't exist and seed reference data."""
+    """Run alembic migrations to bring schema up to date, then seed reference data."""
     from .models.accounts import ProviderMapping
 
     _import_models()
-    Base.metadata.create_all(bind=engine)
-    _apply_lightweight_schema_updates()
+    run_alembic_migrations()
     _seed_account_types()
     _seed_sync_types()
     _seed_builtin_workflows()
@@ -165,32 +159,18 @@ def reset_db() -> None:
     _seed_builtin_workflows()
 
 
-def _apply_lightweight_schema_updates() -> None:
-    """Apply simple ALTER TABLE updates while the schema is still evolving."""
-    with engine.begin() as conn:
-        sync_run_columns = {
-            row[1]
-            for row in conn.execute(text("PRAGMA table_info(scraper_login_sync_runs)")).fetchall()
-        }
-        if "account_filter" not in sync_run_columns:
-            conn.execute(text("ALTER TABLE scraper_login_sync_runs ADD COLUMN account_filter TEXT"))
-        if "agent_log_path" not in sync_run_columns:
-            conn.execute(text("ALTER TABLE scraper_login_sync_runs ADD COLUMN agent_log_path TEXT"))
-        if "sync_type_id" not in sync_run_columns:
-            conn.execute(text("ALTER TABLE scraper_login_sync_runs ADD COLUMN sync_type_id INTEGER REFERENCES sync_types(id)"))
+def run_alembic_migrations() -> None:
+    """Run alembic migrations to bring schema up to date."""
+    from alembic.config import Config
+    from alembic import command
 
-        login_columns = {
-            row[1]
-            for row in conn.execute(text("PRAGMA table_info(scraper_logins)")).fetchall()
-        }
-        if "needs_full_sync" not in login_columns:
-            conn.execute(text("ALTER TABLE scraper_logins ADD COLUMN needs_full_sync BOOLEAN DEFAULT 0"))
-        if "last_full_sync_at" not in login_columns:
-            conn.execute(text("ALTER TABLE scraper_logins ADD COLUMN last_full_sync_at DATETIME"))
-        if "last_balance_sync_at" not in login_columns:
-            conn.execute(text("ALTER TABLE scraper_logins ADD COLUMN last_balance_sync_at DATETIME"))
-        if "last_statements_sync_at" not in login_columns:
-            conn.execute(text("ALTER TABLE scraper_logins ADD COLUMN last_statements_sync_at DATETIME"))
+    alembic_cfg_path = PROJECT_ROOT / "alembic.ini"
+    if not alembic_cfg_path.exists():
+        Base.metadata.create_all(bind=engine)
+        return
+
+    alembic_cfg = Config(str(alembic_cfg_path))
+    command.upgrade(alembic_cfg, "head")
 
 
 def _seed_account_types() -> None:
