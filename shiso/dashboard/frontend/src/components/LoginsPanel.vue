@@ -1,6 +1,7 @@
 <template>
   <Section header="Manage Logins" :collapsed="true" persistKey="logins">
     <template #icons>
+      <Button @click.stop="emit('toggleShowDeleted')" :icon="showDeleted ? 'pi pi-eye-slash' : 'pi pi-eye'" severity="secondary" size="small" text rounded v-tooltip.top="showDeleted ? 'Hide deleted' : 'Show deleted'" />
       <Button @click.stop="emit('add')" icon="pi pi-plus" severity="success" size="small" text rounded />
       <Button
         @click.stop="emit('syncAll')"
@@ -15,11 +16,18 @@
       />
     </template>
 
-    <DataTable :value="logins" stripedRows size="small" :loading="loading" sortField="provider_key" :sortOrder="1" :rowClass="(data) => !data.enabled ? 'opacity-50' : ''">
+    <DataTable :value="logins" stripedRows size="small" :loading="loading" sortField="provider_key" :sortOrder="1" :rowClass="(data) => data.is_deleted ? 'opacity-30' : (!data.enabled ? 'opacity-50' : '')">
       <Column header="Provider" sortField="provider_key" sortable>
         <template #body="{ data }">
-          <div class="font-medium">{{ data.institution || data.provider_key }}</div>
-          <div class="text-xs text-surface-400">{{ data.label }}</div>
+          <div class="flex items-center gap-2">
+            <div class="flex flex-col">
+              <div class="flex items-center gap-2">
+                <span class="font-medium">{{ data.institution || data.provider_key }}</span>
+                <Tag v-if="data.is_deleted" value="Deleted" severity="danger" size="small" />
+              </div>
+              <div class="text-xs text-surface-400">{{ data.label }}</div>
+            </div>
+          </div>
         </template>
       </Column>
       <Column field="account_type" header="Type" sortable>
@@ -70,9 +78,10 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   syncingAll: { type: Boolean, default: false },
   enabledCount: { type: Number, default: 0 },
+  showDeleted: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['add', 'syncAll', 'sync', 'edit', 'toggle', 'delete'])
+const emit = defineEmits(['add', 'syncAll', 'sync', 'edit', 'toggle', 'delete', 'toggleShowDeleted'])
 
 function syncIcon(login) {
   if (login.last_auth_status === 'needs_2fa') return 'pi pi-exclamation-triangle text-amber-400'

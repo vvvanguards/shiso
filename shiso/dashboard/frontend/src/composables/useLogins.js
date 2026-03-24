@@ -20,6 +20,7 @@ function defaultLoginForm() {
 const logins = shallowRef([])
 const loginsLoading = shallowRef(false)
 const syncingAllLogins = shallowRef(false)
+const showDeleted = shallowRef(false)
 const providers = shallowRef([])
 const accountTypes = shallowRef([])
 const loginDialogVisible = shallowRef(false)
@@ -47,7 +48,7 @@ export function useLogins() {
 
   async function loadLogins() {
     try {
-      logins.value = await fetchLogins()
+      logins.value = await fetchLogins(showDeleted.value)
       try {
         problemLogins.value = await fetchProblemLogins()
       } catch {
@@ -155,6 +156,7 @@ export function useLogins() {
     logins,
     loginsLoading,
     syncingAllLogins,
+    showDeleted,
     providers,
     accountTypes,
     loginDialogVisible,

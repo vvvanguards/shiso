@@ -74,6 +74,11 @@ class AccountSnapshot(Base):
     intro_apr_rate: Mapped[Optional[float]] = mapped_column(Float)
     intro_apr_end_date: Mapped[Optional[str]] = mapped_column(Text)
     regular_apr: Mapped[Optional[float]] = mapped_column(Float)
+    is_paid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    paid_date: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    autopay_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_paid_override: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_paid_override_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     raw_extracted_json: Mapped[dict] = mapped_column(JSON, nullable=False)
 
     financial_account: Mapped["FinancialAccount"] = relationship(back_populates="snapshots")
@@ -140,6 +145,7 @@ class ScraperLogin(Base):
     last_sync_snapshot_count: Mapped[Optional[int]] = mapped_column(Integer)
     last_auth_status: Mapped[Optional[str]] = mapped_column(String)  # authenticated | needs_2fa | login_failed
     last_auth_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    auto_sync_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     needs_full_sync: Mapped[bool] = mapped_column(Boolean, default=False)
     last_full_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_balance_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
