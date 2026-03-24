@@ -33,6 +33,12 @@ class Workflow:
     result_key: str = "items"         # which field in output_schema holds the list
     schema_spec: list[dict[str, Any]] | None = None
     source: str = "memory"
+    # Orchestration config — controls which passes run and how results persist.
+    persistence_strategy: str = "generic"      # "financial" | "generic"
+    enrichment_enabled: bool = False
+    statement_download_enabled: bool = False
+    assessment_enabled: bool = False
+    dedup_enabled: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +98,11 @@ def sync_builtin_workflows_to_db() -> None:
                         prompt_template=workflow.prompt_template,
                         result_key=workflow.result_key,
                         output_schema_json=workflow.schema_spec,
+                        persistence_strategy=workflow.persistence_strategy,
+                        enrichment_enabled=workflow.enrichment_enabled,
+                        statement_download_enabled=workflow.statement_download_enabled,
+                        assessment_enabled=workflow.assessment_enabled,
+                        dedup_enabled=workflow.dedup_enabled,
                     )
                 )
                 changed = True
@@ -112,6 +123,11 @@ def save_workflow_definition(
     prompt_template: str,
     result_key: str,
     output_schema_json: list[dict[str, Any]],
+    persistence_strategy: str = "generic",
+    enrichment_enabled: bool = False,
+    statement_download_enabled: bool = False,
+    assessment_enabled: bool = False,
+    dedup_enabled: bool = False,
 ) -> Workflow:
     """Create or update a DB-backed workflow definition."""
     with SessionLocal() as session:
@@ -129,6 +145,11 @@ def save_workflow_definition(
         row.prompt_template = prompt_template
         row.result_key = result_key
         row.output_schema_json = output_schema_json
+        row.persistence_strategy = persistence_strategy
+        row.enrichment_enabled = enrichment_enabled
+        row.statement_download_enabled = statement_download_enabled
+        row.assessment_enabled = assessment_enabled
+        row.dedup_enabled = dedup_enabled
         session.commit()
         session.refresh(row)
 
@@ -206,6 +227,11 @@ def _workflow_from_record(row: WorkflowDefinitionRecord) -> Workflow:
         result_key=row.result_key,
         schema_spec=schema_spec,
         source="db",
+        persistence_strategy=getattr(row, "persistence_strategy", "generic"),
+        enrichment_enabled=getattr(row, "enrichment_enabled", False),
+        statement_download_enabled=getattr(row, "statement_download_enabled", False),
+        assessment_enabled=getattr(row, "assessment_enabled", False),
+        dedup_enabled=getattr(row, "dedup_enabled", False),
     )
 
 
@@ -292,7 +318,7 @@ def _spec(
 # ---------------------------------------------------------------------------
 
 class AccountOutput(BaseModel):
-    card_name: str = ""
+    account_name: str = ""
     account_mask: str | None = None
     current_balance: float | None = None
     statement_balance: float | None = None
@@ -308,6 +334,9 @@ class AccountOutput(BaseModel):
     promo_type: str | None = None
     account_type: str | None = None
     address: str | None = None
+    is_paid: bool | None = None
+    paid_date: str | None = None
+    autopay_enabled: bool | None = None
 
 
 class AccountListOutput(BaseModel):
@@ -317,11 +346,14 @@ class AccountListOutput(BaseModel):
 
 
 class BalanceUpdateItem(BaseModel):
-    card_name: str = ""
+    account_name: str = ""
     account_mask: str | None = None
     current_balance: float | None = None
     due_date: str | None = None
     minimum_payment: float | None = None
+    is_paid: bool | None = None
+    paid_date: str | None = None
+    autopay_enabled: bool | None = None
 
 
 class BalanceUpdateOutput(BaseModel):
@@ -345,15 +377,18 @@ class TenantLeadList(BaseModel):
 
 
 BALANCE_UPDATE_SCHEMA_SPEC = [
-    _spec("card_name", "str", default=""),
+    _spec("account_name", "str", default=""),
     _spec("account_mask", "str", nullable=True),
     _spec("current_balance", "float", nullable=True),
     _spec("due_date", "str", nullable=True),
     _spec("minimum_payment", "float", nullable=True),
+    _spec("is_paid", "bool", nullable=True),
+    _spec("paid_date", "str", nullable=True),
+    _spec("autopay_enabled", "bool", nullable=True),
 ]
 
 ACCOUNT_OUTPUT_SCHEMA_SPEC = [
-    _spec("card_name", "str", default=""),
+    _spec("account_name", "str", default=""),
     _spec("account_mask", "str", nullable=True),
     _spec("current_balance", "float", nullable=True),
     _spec("statement_balance", "float", nullable=True),
@@ -369,6 +404,9 @@ ACCOUNT_OUTPUT_SCHEMA_SPEC = [
     _spec("promo_type", "str", nullable=True),
     _spec("account_type", "str", nullable=True),
     _spec("address", "str", nullable=True),
+    _spec("is_paid", "bool", nullable=True),
+    _spec("paid_date", "str", nullable=True),
+    _spec("autopay_enabled", "bool", nullable=True),
 ]
 
 TENANT_LEAD_SCHEMA_SPEC = [
@@ -410,7 +448,7 @@ exhausted all ways to reveal hidden accounts. Follow these steps IN ORDER:
 3. ONLY AFTER expanding everything and scrolling, extract ALL accounts.
 
 For each account, extract whatever is visible on the overview page:
-- card_name: Display name of the account/card
+- account_name: Display name of the account (e.g. "360 Checking", "Sapphire Preferred", "Duke Energy")
 - account_mask: Last 4-5 digits (e.g. from "****1234")
 - current_balance: Current/outstanding balance amount
 - statement_balance: Statement balance if shown, or null
@@ -424,8 +462,11 @@ For each account, extract whatever is visible on the overview page:
 - intro_apr_end_date: End date of promotional APR period in YYYY-MM-DD format, or null
 - regular_apr: Standard APR that applies after promo ends (e.g. 29.99), or null
 - promo_type: Type of promo - "purchase", "balance_transfer", or "general", or null
-- account_type: e.g. credit_card, bank_account, utility, loan
+- account_type: e.g. credit_card, checking, savings, utility, loan
 - address: Service/billing address if shown
+- is_paid: Whether the current bill has been paid or a payment is scheduled, true/false/null
+- paid_date: Date the bill was paid in YYYY-MM-DD format, or null
+- autopay_enabled: Whether auto-pay is enrolled on the account, true/false/null
 
 Do NOT click into individual account detail pages — just capture what's on the overview.
 
@@ -438,6 +479,11 @@ IMPORTANT: Before calling done, you MUST also set:
   - "blocked_login" if you encountered a login failure (wrong credentials, account locked, etc.)
   - "blocked_other" if you encountered any other blocking issue (CAPTCHA, service error, etc.)
 - verdict_reason: A brief 1-sentence explanation of why (e.g. "2FA required via SMS code", "Invalid username or password")""",
+    persistence_strategy="financial",
+    enrichment_enabled=True,
+    statement_download_enabled=True,
+    assessment_enabled=True,
+    dedup_enabled=True,
 ))
 
 ZILLOW_LEADS_WORKFLOW = register(Workflow(
@@ -482,11 +528,14 @@ If you are NOT on the dashboard (e.g. you see a login page, security challenge, 
 or redirect), set verdict to "needs_login" and stop immediately.
 
 For each known account below, extract:
-- card_name: Display name of the account/card
+- account_name: Display name of the account
 - account_mask: Last 4-5 digits (match to the known accounts)
 - current_balance: Current/outstanding balance amount
 - due_date: Payment due date in YYYY-MM-DD format
 - minimum_payment: Minimum payment amount due
+- is_paid: Whether the current bill has been paid or a payment is scheduled, true/false/null
+- paid_date: Date the bill was paid in YYYY-MM-DD format, or null
+- autopay_enabled: Whether auto-pay is enrolled on the account, true/false/null
 
 Known accounts to look for:
 {{ known_accounts }}
@@ -500,4 +549,6 @@ IMPORTANT: Before calling done, set:
   - "blocked_login" if credentials failed
   - "blocked_other" for any other issue
 - verdict_reason: Brief explanation""",
+    persistence_strategy="financial",
+    dedup_enabled=True,
 ))

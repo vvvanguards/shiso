@@ -197,7 +197,7 @@ async def run_sync(
             sync.error = scrape_result.metrics.errors[-1] if scrape_result.metrics.errors else "Provider timeout"
 
         # Route persistence: non-financial workflows → ToolRunOutput; financial → AccountsDB
-        if workflow and workflow.key not in ("financial_scraper", "balance_update"):
+        if workflow and workflow.persistence_strategy != "financial":
             login_id = logins[0].get("id") if logins else None
             output = ToolRunOutput(
                 tool_key=workflow.key,

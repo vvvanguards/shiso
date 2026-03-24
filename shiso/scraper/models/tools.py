@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
@@ -61,6 +61,11 @@ class WorkflowDefinitionRecord(Base):
     prompt_template: Mapped[str] = mapped_column(Text, nullable=False, default="")
     result_key: Mapped[str] = mapped_column(String, nullable=False, default="items")
     output_schema_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    persistence_strategy: Mapped[str] = mapped_column(String, nullable=False, default="generic")
+    enrichment_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    statement_download_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    assessment_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    dedup_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow_naive, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
