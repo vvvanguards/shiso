@@ -10,12 +10,13 @@ Decoupled from the dashboard API — communicates only through the database.
 import asyncio
 import logging
 import signal
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 
 from .agent.run import load_accounts
 from .database import SessionLocal, init_db
 from .models.accounts import ScraperLogin, ScraperLoginSyncRun
-from .models.sync_type import SyncType, SyncTypeRecord
+from .models.sync_type import SyncType, SyncTypeRecord, get_sync_type_id
 from .services.accounts_db import AccountsDB
 from .services.sync import run_sync
 from .tools import get_workflow
@@ -23,6 +24,8 @@ from .tools import get_workflow
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL = 3  # seconds
+SCHEDULE_CHECK_INTERVAL = 300  # seconds between scheduled-sync checks
+FULL_SYNC_INTERVAL_HOURS = 24  # how often to auto-queue full syncs
 
 
 def _worker_process_command() -> list[str]:
@@ -67,6 +70,63 @@ def _next_queued_run() -> tuple[int, str] | None:
         if run:
             return run.id, run.provider_key
     return None
+
+
+def _queue_scheduled_syncs() -> int:
+    """Auto-queue full syncs for logins that are due.
+
+    A login is due when:
+    - auto_sync_enabled is True
+    - enabled is True and not deleted
+    - last_full_sync_at is NULL or older than FULL_SYNC_INTERVAL_HOURS
+    - No existing queued/running run for this login
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=FULL_SYNC_INTERVAL_HOURS)
+    sync_type_id = get_sync_type_id("full")
+    queued = 0
+
+    with SessionLocal() as session:
+        logins = (
+            session.query(ScraperLogin)
+            .filter(
+                ScraperLogin.auto_sync_enabled.is_(True),
+                ScraperLogin.enabled.is_(True),
+                ScraperLogin.is_deleted.is_(False),
+            )
+            .filter(
+                (ScraperLogin.last_full_sync_at.is_(None))
+                | (ScraperLogin.last_full_sync_at < cutoff)
+            )
+            .all()
+        )
+
+        for login in logins:
+            already = (
+                session.query(ScraperLoginSyncRun)
+                .filter_by(scraper_login_id=login.id)
+                .filter(ScraperLoginSyncRun.status.in_(["queued", "running"]))
+                .first()
+            )
+            if already:
+                continue
+
+            run = ScraperLoginSyncRun(
+                scraper_login_id=login.id,
+                provider_key=login.provider_key,
+                sync_type_id=sync_type_id,
+                status="queued",
+                started_at=datetime.utcnow(),
+            )
+            login.last_sync_status = "queued"
+            login.last_sync_error = None
+            session.add(run)
+            queued += 1
+
+        if queued:
+            session.commit()
+            logger.info("Scheduled %d full sync(s)", queued)
+
+    return queued
 
 
 async def execute_run(run_id: int) -> None:
@@ -186,6 +246,7 @@ async def run_worker() -> None:
 
     logger.info("Sync worker started — polling every %ds", POLL_INTERVAL)
     stop = asyncio.Event()
+    last_schedule_check = 0.0
 
     def _signal_handler():
         logger.info("Shutting down...")
@@ -206,6 +267,12 @@ async def run_worker() -> None:
                 logger.info("Picking up run %d (%s)", run_id, provider_key)
                 await execute_run(run_id)
             else:
+                # Periodically check if any logins need a scheduled full sync
+                now = time.time()
+                if now - last_schedule_check >= SCHEDULE_CHECK_INTERVAL:
+                    _queue_scheduled_syncs()
+                    last_schedule_check = now
+
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL)
                 except asyncio.TimeoutError:
