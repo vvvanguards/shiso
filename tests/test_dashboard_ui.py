@@ -44,7 +44,6 @@ def api_server() -> Generator[str, None, None]:
             host="127.0.0.1",
             port=8299,
             log_level="warning",
-            lifespan="off",
         )
 
     thread = threading.Thread(target=run, daemon=True)

@@ -159,6 +159,55 @@ def reset_db() -> None:
     _seed_builtin_workflows()
 
 
+def _add_missing_columns_to_existing_schema() -> None:
+    """Add new columns to an existing pre-alembic database.
+
+    Handles the case where the database has the old schema (before alembic
+    migrations were introduced) and needs new columns added without
+    recreating tables. Returns silently if columns already exist.
+    """
+    from sqlalchemy import text
+
+    # Columns added by each migration that we need on the pre-alembic DB.
+    # Format: (table_name, column_name, column_definition)
+    new_columns = [
+        # Migration 002: is_deleted on scraper_logins
+        ("scraper_logins", "is_deleted", "BOOLEAN NOT NULL DEFAULT 0"),
+        # Migration 004: auto_sync_enabled on scraper_logins
+        ("scraper_logins", "auto_sync_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
+        # Migration 001: is_paid and related on account_snapshots
+        ("account_snapshots", "is_paid", "BOOLEAN"),
+        ("account_snapshots", "paid_date", "TEXT"),
+        ("account_snapshots", "autopay_enabled", "BOOLEAN"),
+        ("account_snapshots", "is_paid_override", "BOOLEAN"),
+        ("account_snapshots", "is_paid_override_at", "TIMESTAMP"),
+        # Migration 003: workflow_definitions orchestration fields
+        ("workflow_definitions", "persistence_strategy", "TEXT"),
+        ("workflow_definitions", "enrichment_enabled", "BOOLEAN"),
+        ("workflow_definitions", "statement_download_enabled", "BOOLEAN"),
+        ("workflow_definitions", "assessment_enabled", "BOOLEAN"),
+        ("workflow_definitions", "dedup_enabled", "BOOLEAN"),
+    ]
+
+    with SessionLocal() as session:
+        for table, column, definition in new_columns:
+            try:
+                # Check if column already exists
+                session.execute(text(f"SELECT 1 FROM {table} LIMIT 1"))
+                # Table exists — check if column is missing
+                try:
+                    session.execute(text(f"SELECT {column} FROM {table} LIMIT 1"))
+                except Exception:
+                    # Column missing — add it
+                    session.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                    )
+                    session.commit()
+            except Exception:
+                # Table doesn't exist at all — skip
+                pass
+
+
 def run_alembic_migrations() -> None:
     """Run alembic migrations to bring schema up to date."""
     from alembic.config import Config
@@ -169,6 +218,34 @@ def run_alembic_migrations() -> None:
         Base.metadata.create_all(bind=engine)
         return
 
+    from sqlalchemy import text
+
+    with SessionLocal() as session:
+        try:
+            session.execute(text("SELECT 1 FROM alembic_version"))
+            is_alembic_managed = True
+        except Exception:
+            is_alembic_managed = False
+
+    if not is_alembic_managed:
+        # Database predates alembic. Check if it has existing tables
+        # (i.e., a real existing DB, not a fresh one that needs create_all).
+        with SessionLocal() as session:
+            try:
+                session.execute(text("SELECT 1 FROM scraper_logins LIMIT 1"))
+                has_real_schema = True
+            except Exception:
+                has_real_schema = False
+
+        if has_real_schema:
+            # Pre-alembic DB with existing tables: add new columns directly,
+            # then stamp so alembic knows we're at head for future migrations.
+            _add_missing_columns_to_existing_schema()
+            alembic_cfg = Config(str(alembic_cfg_path))
+            command.stamp(alembic_cfg, "head")
+            return
+
+    # Normal case: fresh DB or already alembic-managed — run upgrades normally.
     alembic_cfg = Config(str(alembic_cfg_path))
     command.upgrade(alembic_cfg, "head")
 
