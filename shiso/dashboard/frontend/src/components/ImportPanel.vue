@@ -20,7 +20,8 @@
         <template #start>
           <div class="flex items-center gap-3 text-sm">
             <Tag :value="`${candidates.length} total`" severity="secondary" />
-            <Tag v-if="duplicateCount" :value="`${duplicateCount} existing`" severity="warn" />
+            <Tag v-if="deletedDuplicateCount" :value="`${deletedDuplicateCount} deleted`" severity="danger" />
+            <Tag v-if="duplicateCount - deletedDuplicateCount" :value="`${duplicateCount - deletedDuplicateCount} existing`" severity="warn" />
             <Tag :value="`${selectedCount} selected`" severity="info" />
           </div>
         </template>
@@ -42,13 +43,14 @@
       </Toolbar>
 
       <DataTable
-        :value="candidates"
+        :value="sortedCandidates"
         v-model:selection="selectedModel"
         dataKey="id"
         scrollable
         scrollHeight="500px"
         size="small"
         stripedRows
+        :rowClass="(data) => data.is_duplicate && data.existing_login_is_deleted ? 'bg-red-900/20' : ''"
       >
         <Column selectionMode="multiple" headerStyle="width: 3rem" />
         <Column header="Site">
@@ -68,9 +70,10 @@
             </div>
           </template>
         </Column>
-        <Column header="Status" style="width: 6rem">
+        <Column header="Status" style="width: 8rem">
           <template #body="{ data }">
-            <Tag v-if="data.is_duplicate" value="exists" severity="warn" />
+            <Tag v-if="data.is_duplicate && data.existing_login_is_deleted" value="deleted" severity="danger" />
+            <Tag v-else-if="data.is_duplicate" value="exists" severity="warn" />
             <Tag v-else value="new" severity="success" />
           </template>
         </Column>
@@ -80,7 +83,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
@@ -105,8 +108,20 @@ const selectedModel = computed({
 
 const candidates = computed(() => props.importSession?.candidates || [])
 
+const sortedCandidates = computed(() => {
+  const all = candidates.value
+  const deletedDupes = all.filter(c => c.is_duplicate && c.existing_login_is_deleted)
+  const regularDupes = all.filter(c => c.is_duplicate && !c.existing_login_is_deleted)
+  const newOnes = all.filter(c => !c.is_duplicate)
+  return [...deletedDupes, ...regularDupes, ...newOnes]
+})
+
 const duplicateCount = computed(() => {
   return candidates.value.filter(c => c.is_duplicate).length
+})
+
+const deletedDuplicateCount = computed(() => {
+  return candidates.value.filter(c => c.is_duplicate && c.existing_login_is_deleted).length
 })
 
 const selectedCount = computed(() => selectedRows.value.length)
@@ -114,12 +129,18 @@ const selectedCount = computed(() => selectedRows.value.length)
 const importButtonLabel = computed(() => {
   if (!selectedCount.value) return 'Import 0 Selected'
   const newCount = selectedRows.value.filter(r => !r.is_duplicate).length
-  const dupeCount = selectedRows.value.filter(r => r.is_duplicate).length
+  const dupeCount = selectedRows.value.filter(r => r.is_duplicate && !r.existing_login_is_deleted).length
+  const deletedDupeCount = selectedRows.value.filter(r => r.is_duplicate && r.existing_login_is_deleted).length
   const parts = []
   if (newCount) parts.push(`${newCount} new`)
   if (dupeCount) parts.push(`${dupeCount} update`)
+  if (deletedDupeCount) parts.push(`${deletedDupeCount} reactivate`)
   return `Import (${parts.join(', ')})`
 })
+
+watch(candidates, (newCandidates) => {
+  selectedRows.value = newCandidates.filter(c => !c.is_duplicate || !c.existing_login_is_deleted)
+}, { immediate: true })
 
 function selectAll() {
   selectedRows.value = [...candidates.value]

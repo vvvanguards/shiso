@@ -1,7 +1,7 @@
 import { computed, ref, shallowRef, provide, inject } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import { FilterMatchMode } from '@primevue/core/api'
-import { fetchDashboard } from '../api.js'
+import { fetchDashboard, updateSnapshotPaidStatus } from '../api.js'
 
 const ACTIVE_SECTION_KEY = 'activeSection'
 
@@ -111,6 +111,21 @@ export function useDashboard() {
     summary.value = dashboard.summary
   }
 
+  async function toggleSnapshotPaidStatus(snapshotId, currentIsPaid) {
+    const newIsPaid = !currentIsPaid
+    try {
+      const updated = await updateSnapshotPaidStatus(snapshotId, newIsPaid)
+      const idx = snapshots.value.findIndex(s => s.id === snapshotId)
+      if (idx !== -1) {
+        snapshots.value[idx] = { ...snapshots.value[idx], ...updated }
+      }
+      return updated
+    } catch (err) {
+      toast.add({ severity: 'error', summary: 'Update Failed', detail: err.message, life: 4000 })
+      throw err
+    }
+  }
+
   return {
     snapshots,
     summary,
@@ -131,5 +146,6 @@ export function useDashboard() {
     syncSnapshotRow,
     editSnapshotRow,
     loadDashboard,
+    toggleSnapshotPaidStatus,
   }
 }

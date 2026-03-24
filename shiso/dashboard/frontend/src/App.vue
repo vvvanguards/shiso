@@ -120,6 +120,7 @@
               :logins="logins"
               @sync="handleSnapshotSync"
               @edit="handleSnapshotEdit"
+              @toggle-paid="handleTogglePaid"
             />
           </section>
 
@@ -157,12 +158,14 @@
               :loading="loginsLoading"
               :syncingAll="syncingAllLogins"
               :enabledCount="enabledLoginCount"
+              :showDeleted="showDeleted"
               @add="openLoginDialog()"
               @syncAll="syncEnabledLogins"
               @sync="syncLoginRow"
               @edit="openLoginDialog"
               @toggle="toggleEnabled"
               @delete="confirmDeleteLogin"
+              @toggleShowDeleted="showDeleted = !showDeleted; loadLogins()"
             />
           </section>
 
@@ -268,11 +271,11 @@ const activeSection = provideActiveSection('overview')
 const {
   summary, loading, statusMessage, statusError, tableFilters,
   billRows, assetRows, liabilityRows, zeroBalanceRows,
-  loadDashboard,
+  loadDashboard, toggleSnapshotPaidStatus,
 } = useDashboard()
 
 const {
-  logins, loginsLoading, syncingAllLogins, providers, accountTypes,
+  logins, loginsLoading, syncingAllLogins, showDeleted, providers, accountTypes,
   loginDialogVisible, loginDialogEdit, loginForm, toolOptions,
   problemLoginsDerived, enabledLoginCount,
   loadLogins, loadProviders, syncLoginRow, syncEnabledLogins,
@@ -371,6 +374,10 @@ function handleSnapshotEdit(snapshot) {
     return
   }
   openLoginDialog(login)
+}
+
+function handleTogglePaid(snapshotId, newIsPaid) {
+  toggleSnapshotPaidStatus(snapshotId, newIsPaid)
 }
 
 async function loadAll() {

@@ -136,6 +136,7 @@ class ScraperLogin(Base):
     login_url: Mapped[Optional[str]] = mapped_column(String)
     account_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     last_sync_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_sync_finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime)

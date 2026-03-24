@@ -45,7 +45,9 @@ export function useImport() {
     if (!importSession.value?.session_id) return
     try {
       await deleteImport(importSession.value.session_id)
-    } catch (_) {}
+    } catch (_) {
+      // ignore delete errors
+    }
     importSession.value = null
   }
 

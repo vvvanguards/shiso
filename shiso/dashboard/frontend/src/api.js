@@ -6,8 +6,22 @@ export async function fetchDashboard() {
   return response.json()
 }
 
-export async function fetchLogins() {
-  const response = await fetch(`${API_BASE}/logins`)
+export async function updateSnapshotPaidStatus(snapshotId, isPaid) {
+  const response = await fetch(`${API_BASE}/snapshots/${snapshotId}/paid-status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_paid: isPaid }),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to update paid status')
+  }
+  return response.json()
+}
+
+export async function fetchLogins(includeDeleted = false) {
+  const url = `${API_BASE}/logins${includeDeleted ? '?include_deleted=true' : ''}`
+  const response = await fetch(url)
   if (!response.ok) throw new Error('Failed to fetch logins')
   return response.json()
 }
