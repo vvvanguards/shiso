@@ -1433,11 +1433,14 @@ def complete_agent_session_endpoint(run_id: int, req: AgentSessionCompleteReques
 # ---------------------------------------------------------------------------
 
 class RewardsProgramBase(BaseModel):
-    financial_account_id: int
+    scraper_login_id: int
+    financial_account_id: Optional[int] = None
     program_name: str
     program_type: str = "points"
+    membership_id: Optional[str] = None
     unit_name: Optional[str] = None
     cents_per_unit: Optional[float] = None
+    current_balance: Optional[float] = None
     active: bool = True
 
 
@@ -1456,11 +1459,14 @@ def list_rewards_programs():
         return [
             RewardsProgramResponse(
                 id=p.id,
+                scraper_login_id=p.scraper_login_id,
                 financial_account_id=p.financial_account_id,
                 program_name=p.program_name,
                 program_type=p.program_type,
+                membership_id=p.membership_id,
                 unit_name=p.unit_name,
                 cents_per_unit=p.cents_per_unit,
+                current_balance=p.current_balance,
                 display_icon_url=p.display_icon_url,
                 active=p.active,
                 created_at=p.created_at.isoformat(),
@@ -1474,15 +1480,22 @@ def list_rewards_programs():
 def create_rewards_program(data: RewardsProgramBase):
     """Create a new rewards program."""
     with scraper.SessionLocal() as session:
-        account = session.get(scraper.FinancialAccount, data.financial_account_id)
-        if not account:
-            raise HTTPException(status_code=404, detail="Account not found")
+        login = session.get(scraper.ScraperLogin, data.scraper_login_id)
+        if not login:
+            raise HTTPException(status_code=404, detail="Scraper login not found")
+        if data.financial_account_id is not None:
+            account = session.get(scraper.FinancialAccount, data.financial_account_id)
+            if not account:
+                raise HTTPException(status_code=404, detail="Financial account not found")
         program = scraper.RewardsProgram(
+            scraper_login_id=data.scraper_login_id,
             financial_account_id=data.financial_account_id,
             program_name=data.program_name,
             program_type=data.program_type,
+            membership_id=data.membership_id,
             unit_name=data.unit_name,
             cents_per_unit=data.cents_per_unit,
+            current_balance=data.current_balance,
             active=data.active,
         )
         session.add(program)
@@ -1490,11 +1503,14 @@ def create_rewards_program(data: RewardsProgramBase):
         session.refresh(program)
         return RewardsProgramResponse(
             id=program.id,
+            scraper_login_id=program.scraper_login_id,
             financial_account_id=program.financial_account_id,
             program_name=program.program_name,
             program_type=program.program_type,
+            membership_id=program.membership_id,
             unit_name=program.unit_name,
             cents_per_unit=program.cents_per_unit,
+            current_balance=program.current_balance,
             display_icon_url=program.display_icon_url,
             active=program.active,
             created_at=program.created_at.isoformat(),
@@ -1509,21 +1525,34 @@ def update_rewards_program(program_id: int, data: RewardsProgramBase):
         program = session.get(scraper.RewardsProgram, program_id)
         if not program:
             raise HTTPException(status_code=404, detail="Rewards program not found")
+        login = session.get(scraper.ScraperLogin, data.scraper_login_id)
+        if not login:
+            raise HTTPException(status_code=404, detail="Scraper login not found")
+        if data.financial_account_id is not None:
+            account = session.get(scraper.FinancialAccount, data.financial_account_id)
+            if not account:
+                raise HTTPException(status_code=404, detail="Financial account not found")
+        program.scraper_login_id = data.scraper_login_id
         program.financial_account_id = data.financial_account_id
         program.program_name = data.program_name
         program.program_type = data.program_type
+        program.membership_id = data.membership_id
         program.unit_name = data.unit_name
         program.cents_per_unit = data.cents_per_unit
+        program.current_balance = data.current_balance
         program.active = data.active
         session.commit()
         session.refresh(program)
         return RewardsProgramResponse(
             id=program.id,
+            scraper_login_id=program.scraper_login_id,
             financial_account_id=program.financial_account_id,
             program_name=program.program_name,
             program_type=program.program_type,
+            membership_id=program.membership_id,
             unit_name=program.unit_name,
             cents_per_unit=program.cents_per_unit,
+            current_balance=program.current_balance,
             display_icon_url=program.display_icon_url,
             active=program.active,
             created_at=program.created_at.isoformat(),
