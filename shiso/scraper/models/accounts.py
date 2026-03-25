@@ -157,6 +157,7 @@ class ScraperLogin(Base):
     snapshots: Mapped[list["AccountSnapshot"]] = relationship(back_populates="scraper_login")
     account_links: Mapped[list["FinancialAccountLogin"]] = relationship(back_populates="scraper_login")
     accounts: Mapped[list["FinancialAccount"]] = relationship(back_populates="scraper_login")
+    rewards_programs: Mapped[list["RewardsProgram"]] = relationship(back_populates="scraper_login")
     sync_runs: Mapped[list["ScraperLoginSyncRun"]] = relationship(back_populates="scraper_login")
 
 
@@ -242,24 +243,28 @@ class PromoAprPeriod(Base):
 
 
 class RewardsProgram(Base):
-    """A rewards program associated with a financial account (points, miles, cashback)."""
+    """A rewards program associated with a scraper login (points, miles, cashback)."""
     __tablename__ = "rewards_programs"
     __table_args__ = (
-        UniqueConstraint("financial_account_id", "program_name", name="uq_rewards_program_account_name"),
+        UniqueConstraint("scraper_login_id", "program_name", name="uq_rewards_program_login_name"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    financial_account_id: Mapped[int] = mapped_column(ForeignKey("financial_accounts.id"), nullable=False)
+    scraper_login_id: Mapped[int] = mapped_column(ForeignKey("scraper_logins.id"), nullable=False)  # required — where you manage it
+    financial_account_id: Mapped[Optional[int]] = mapped_column(ForeignKey("financial_accounts.id"), nullable=True)  # optional — card link
     program_name: Mapped[str] = mapped_column(String, nullable=False)  # e.g., "Chase Ultimate Rewards", "Delta SkyMiles"
     program_type: Mapped[str] = mapped_column(String, nullable=False, default="points")  # points | miles | cashback | other
+    membership_id: Mapped[Optional[str]] = mapped_column(String)  # loyalty/membership number
     unit_name: Mapped[Optional[str]] = mapped_column(String)  # e.g., "points", "miles", "%"
     cents_per_unit: Mapped[Optional[float]] = mapped_column(Float)  # Valuation: e.g., 1.5 cents per point
+    current_balance: Mapped[Optional[float]] = mapped_column(Float)  # latest known balance
     display_icon_url: Mapped[Optional[str]] = mapped_column(String)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    financial_account: Mapped["FinancialAccount"] = relationship(back_populates="rewards_programs")
+    scraper_login: Mapped["ScraperLogin"] = relationship(back_populates="rewards_programs")
+    financial_account: Mapped[Optional["FinancialAccount"]] = relationship(back_populates="rewards_programs")
     balances: Mapped[list["RewardsBalance"]] = relationship(back_populates="rewards_program", cascade="all, delete-orphan")
 
 
