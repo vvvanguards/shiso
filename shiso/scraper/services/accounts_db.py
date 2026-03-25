@@ -1111,12 +1111,13 @@ class AccountsDB:
             )
 
             balances = (
-                session.query(RewardsBalance, RewardsProgram, FinancialAccount)
+                session.query(RewardsBalance, RewardsProgram, FinancialAccount, ScraperLogin)
                 .join(latest_subq,
                     (RewardsBalance.rewards_program_id == latest_subq.c.rewards_program_id)
                     & (RewardsBalance.captured_at == latest_subq.c.max_captured_at))
                 .join(RewardsProgram, RewardsBalance.rewards_program_id == RewardsProgram.id)
-                .join(FinancialAccount, RewardsProgram.financial_account_id == FinancialAccount.id)
+                .join(ScraperLogin, RewardsProgram.scraper_login_id == ScraperLogin.id)
+                .outerjoin(FinancialAccount, RewardsProgram.financial_account_id == FinancialAccount.id)
                 .all()
             )
 
@@ -1124,7 +1125,7 @@ class AccountsDB:
             by_type: dict[str, dict] = {}
             programs: list[dict] = []
 
-            for rb, rp, fa in balances:
+            for rb, rp, fa, sl in balances:
                 value = rb.monetary_value or 0.0
                 total_value += value
 
@@ -1138,10 +1139,13 @@ class AccountsDB:
                     "program_id": rp.id,
                     "program_name": rp.program_name,
                     "program_type": rp.program_type,
-                    "account_id": fa.id,
-                    "account_display_name": fa.display_name,
-                    "account_mask": fa.account_mask,
-                    "institution": fa.institution,
+                    "scraper_login_id": rp.scraper_login_id,
+                    "login_label": sl.label if sl else None,
+                    "account_id": fa.id if fa else None,
+                    "account_display_name": fa.display_name if fa else None,
+                    "account_mask": fa.account_mask if fa else None,
+                    "institution": fa.institution if fa else None,
+                    "membership_id": rp.membership_id,
                     "balance": rb.balance,
                     "monetary_value": rb.monetary_value,
                     "unit_name": rp.unit_name,
