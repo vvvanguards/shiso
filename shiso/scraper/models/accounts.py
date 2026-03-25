@@ -13,13 +13,25 @@ from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
 from ..database import Base
 
 
+class BalanceType(Base):
+    __tablename__ = "balance_types"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+
+    account_types: Mapped[list["FinancialAccountType"]] = relationship(back_populates="balance_type")
+
+
 class FinancialAccountType(Base):
     __tablename__ = "financial_account_types"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
-    balance_type: Mapped[str] = mapped_column(Text, nullable=False, default="liability")  # asset | liability
+    balance_type_id: Mapped[int] = mapped_column(
+        ForeignKey("balance_types.id"), nullable=False, server_default="2"
+    )  # default to liability
 
+    balance_type: Mapped["BalanceType"] = relationship(back_populates="account_types")
     accounts: Mapped[list["FinancialAccount"]] = relationship(back_populates="account_type")
 
 
