@@ -309,7 +309,7 @@
           <Column header="" style="width: 8rem">
             <template #body="{ data }">
               <div class="flex gap-1">
-                <Button @click="syncLoginRow(data)" icon="pi pi-sync" severity="success" text rounded size="small" :disabled="!data.enabled || data.last_sync_status === 'queued'" v-tooltip.top="'Sync now'" />
+                <Button @click="syncLoginRow(data)" icon="pi pi-sync" severity="success" text rounded size="small" :disabled="!data.enabled" v-tooltip.top="'Sync now'" />
                 <Button @click="openLoginDialog(data)" icon="pi pi-pencil" severity="secondary" text rounded size="small" v-tooltip.top="'Edit'" />
                 <Button @click="toggleEnabled(data)" :icon="data.enabled ? 'pi pi-pause' : 'pi pi-play'" severity="info" text rounded size="small" v-tooltip.top="data.enabled ? 'Pause' : 'Resume'" />
                 <Button @click="confirmDeleteLogin(data)" icon="pi pi-trash" severity="danger" text rounded size="small" v-tooltip.top="'Delete'" />
@@ -753,10 +753,20 @@ async function loadLogins() {
 
 async function syncLoginRow(login) {
   try {
-    await apiSyncLogin(login.id)
-    const idx = logins.value.findIndex(l => l.id === login.id)
-    if (idx >= 0) logins.value[idx].last_sync_status = 'queued'
-    toast.add({ severity: 'info', summary: 'Queued', detail: `${login.label} queued for sync`, life: 3000 })
+    const result = await apiSyncLogin(login.id)
+    if (result.status === 'already_queued') {
+      // Already queued — force re-queue
+      const forceResult = await apiSyncLogin(login.id, { force: true })
+      const idx = logins.value.findIndex(l => l.id === login.id)
+      if (idx >= 0) logins.value[idx].last_sync_status = 'queued'
+      toast.add({ severity: 'info', summary: 'Re-queued', detail: `${login.label} sync re-queued`, life: 3000 })
+    } else if (result.status === 'running') {
+      toast.add({ severity: 'warn', summary: 'In Progress', detail: `${login.label} sync already running`, life: 4000 })
+    } else {
+      const idx = logins.value.findIndex(l => l.id === login.id)
+      if (idx >= 0) logins.value[idx].last_sync_status = 'queued'
+      toast.add({ severity: 'info', summary: 'Queued', detail: `${login.label} queued for sync`, life: 3000 })
+    }
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
   }
