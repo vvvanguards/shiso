@@ -85,7 +85,7 @@ class TestFinancialWorkflow:
 
     def test_output_schema_fields_match_original(self):
         expected_fields = {
-            "account_name", "account_mask", "current_balance", "statement_balance",
+            "account_name", "account_mask", "account_number", "current_balance", "statement_balance",
             "due_date", "minimum_payment", "last_payment_amount",
             "last_payment_date", "credit_limit", "interest_rate",
             "intro_apr_rate", "intro_apr_end_date", "regular_apr",

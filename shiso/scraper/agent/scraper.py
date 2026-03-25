@@ -381,11 +381,14 @@ def _is_generic_account_name(name: str | None) -> bool:
 
 
 def _account_key(account: dict[str, Any]) -> str:
+    number = account.get("account_number")
     mask = _normalize_mask(account.get("account_mask"))
     name = (account.get("account_name") or "").strip()
     address = (account.get("address") or "").strip()
     acct_type = (account.get("account_type") or "").strip()
 
+    if number:
+        return f"num:{number}"
     if mask and name and not _is_generic_account_name(name):
         return f"mask:{mask}|name:{name}"
     if mask:
@@ -412,8 +415,17 @@ def _normalize_name(name: str | None) -> str:
 
 def _find_matching_key(collected: dict[str, dict], account: dict) -> str | None:
     """Find if account already exists under a different key."""
+    number = account.get("account_number")
     mask = _normalize_mask(account.get("account_mask"))
     name = _normalize_name(account.get("account_name"))
+
+    # Account number is authoritative — match exactly or not at all.
+    # Two accounts with the same name but different account numbers are distinct.
+    if number:
+        for key, existing in collected.items():
+            if existing.get("account_number") == number:
+                return key
+        return None
 
     for key, existing in collected.items():
         if mask and _normalize_mask(existing.get("account_mask")) == mask:
@@ -433,7 +445,7 @@ def _find_matching_key(collected: dict[str, dict], account: dict) -> str | None:
 
 def _merge_account(existing: dict, incoming: dict) -> dict:
     merged = dict(existing)
-    for field in ("account_name", "account_mask", "current_balance", "statement_balance",
+    for field in ("account_name", "account_mask", "account_number", "current_balance", "statement_balance",
                   "due_date", "minimum_payment", "last_payment_amount",
                   "last_payment_date", "credit_limit", "interest_rate",
                   "account_type", "address"):

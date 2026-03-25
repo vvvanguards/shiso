@@ -320,6 +320,7 @@ def _spec(
 class AccountOutput(BaseModel):
     account_name: str = ""
     account_mask: str | None = None
+    account_number: str | None = None
     current_balance: float | None = None
     statement_balance: float | None = None
     due_date: str | None = None
@@ -348,6 +349,7 @@ class AccountListOutput(BaseModel):
 class BalanceUpdateItem(BaseModel):
     account_name: str = ""
     account_mask: str | None = None
+    account_number: str | None = None
     current_balance: float | None = None
     due_date: str | None = None
     minimum_payment: float | None = None
@@ -379,6 +381,7 @@ class TenantLeadList(BaseModel):
 BALANCE_UPDATE_SCHEMA_SPEC = [
     _spec("account_name", "str", default=""),
     _spec("account_mask", "str", nullable=True),
+    _spec("account_number", "str", nullable=True),
     _spec("current_balance", "float", nullable=True),
     _spec("due_date", "str", nullable=True),
     _spec("minimum_payment", "float", nullable=True),
@@ -390,6 +393,7 @@ BALANCE_UPDATE_SCHEMA_SPEC = [
 ACCOUNT_OUTPUT_SCHEMA_SPEC = [
     _spec("account_name", "str", default=""),
     _spec("account_mask", "str", nullable=True),
+    _spec("account_number", "str", nullable=True),
     _spec("current_balance", "float", nullable=True),
     _spec("statement_balance", "float", nullable=True),
     _spec("due_date", "str", nullable=True),
@@ -450,6 +454,7 @@ exhausted all ways to reveal hidden accounts. Follow these steps IN ORDER:
 For each account, extract whatever is visible on the overview page:
 - account_name: Display name of the account (e.g. "360 Checking", "Sapphire Preferred", "Duke Energy")
 - account_mask: Last 4-5 digits (e.g. from "****1234")
+- account_number: Full account number if visible — navigate to account detail if needed to find it. Fall back to null if not available.
 - current_balance: Current/outstanding balance amount
 - statement_balance: Statement balance if shown, or null
 - due_date: Payment due date in YYYY-MM-DD format
