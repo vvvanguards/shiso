@@ -49,8 +49,9 @@ export async function deleteLogin(id) {
   return response.json()
 }
 
-export async function syncLogin(id) {
-  const response = await fetch(`${API_BASE}/logins/${id}/sync`, {
+export async function syncLogin(id, { force = false } = {}) {
+  const params = force ? '?force=true' : ''
+  const response = await fetch(`${API_BASE}/logins/${id}/sync${params}`, {
     method: 'POST',
   })
   if (!response.ok) {
