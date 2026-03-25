@@ -136,10 +136,11 @@
               @sync="handleSnapshotSync"
               @edit="handleSnapshotEdit"
             />
-          </section>
-
-          <section id="rewards">
-            <RewardsPanel :rewards="rewards" :loading="loading" @add="openRewardsDialog()" @edit="openRewardsDialog($event)" />
+            <RewardsSection
+              :rows="rewards"
+              @add="openRewardsDialog()"
+              @edit="openRewardsDialog($event)"
+            />
           </section>
 
           <section id="zero-balance">
@@ -225,6 +226,7 @@
       v-model:form="rewardsForm"
       :edit="rewardsDialogEdit"
       :accounts="accountsList"
+      :logins="logins"
       :rewardTypes="rewardsTypes"
       @save="() => saveRewardsProgram(loadAll)"
     />
@@ -247,6 +249,7 @@ import AssetsSection from './components/AssetsSection.vue'
 import LiabilitiesSection from './components/LiabilitiesSection.vue'
 import ZeroBalanceSection from './components/ZeroBalanceSection.vue'
 import PromosPanel from './components/PromosPanel.vue'
+import RewardsSection from './components/RewardsSection.vue'
 import RewardsPanel from './components/RewardsPanel.vue'
 import LoginsPanel from './components/LoginsPanel.vue'
 import ImportPanel from './components/ImportPanel.vue'
