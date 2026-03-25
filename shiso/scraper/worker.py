@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL = 3  # seconds
 SCHEDULE_CHECK_INTERVAL = 300  # seconds between scheduled-sync checks
-FULL_SYNC_INTERVAL_HOURS = 24  # how often to auto-queue full syncs
+FULL_SYNC_INTERVAL_HOURS = 168  # 7 days
 
 
 def _worker_process_command() -> list[str]:
