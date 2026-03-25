@@ -3,7 +3,8 @@
     <Card>
       <template #content>
         <div class="text-xs uppercase tracking-widest text-shiso-400">Assets</div>
-        <div class="mt-1 text-2xl font-semibold text-accent-green">{{ money(summary.asset_total) }}</div>
+        <div class="mt-1 text-2xl font-semibold text-accent-green">{{ money((summary.asset_total || 0) + (summary.total_rewards_value || 0)) }}</div>
+        <div v-if="summary.total_rewards_value" class="text-xs text-shiso-400 mt-0.5">+ {{ money(summary.total_rewards_value) }} rewards</div>
       </template>
     </Card>
     <Card>

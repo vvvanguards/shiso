@@ -460,11 +460,15 @@ class AccountsDB:
             else:
                 category["debt_total"] += balance
 
+        rewards_summary = self.get_rewards_summary()
+        total_rewards_value = rewards_summary.get("total_monetary_value", 0.0) or 0.0
+
         return {
             "accounts": len(latest),
             "asset_total": asset_total,
             "debt_total": debt_total,
             "net_balance": asset_total - debt_total,
+            "total_rewards_value": total_rewards_value,
             "by_provider": by_provider,
             "by_category": by_category,
             "by_balance_type": by_balance_type,
