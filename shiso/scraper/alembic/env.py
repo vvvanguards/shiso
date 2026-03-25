@@ -13,6 +13,7 @@ from shiso.scraper.database import Base
 from shiso.scraper.models.accounts import (
     AccountSnapshot,
     AccountStatement,
+    BalanceType,
     FinancialAccount,
     FinancialAccountIdentifier,
     FinancialAccountLogin,
