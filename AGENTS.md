@@ -88,6 +88,31 @@ uv run shiso --help              # Full CLI help
 - Import detects duplicates by `(provider_key, username)` and supports overwriting
 - Encryption key at `shiso/scraper/config/.fernet.key` (gitignored, auto-generated)
 
+## Git Worktrees
+
+Use git worktrees when creating branches for feature work. Worktrees create isolated workspaces sharing the same repository, allowing work on multiple branches simultaneously without switching.
+
+**When to use:**
+- Starting any feature branch work
+- When implementing multi-step tasks that could benefit from isolation
+- Before executing implementation plans
+
+**How to use:**
+1. Check for existing worktree directory: `.worktrees/` (preferred) or `worktrees/`
+2. Verify the directory is gitignored: `git check-ignore -q .worktrees`
+3. Create worktree with new branch: `git worktree add .worktrees/<branch-name> -b feature/<name>`
+4. Run project setup in the worktree: `uv sync` or `npm install`
+5. Verify clean baseline with tests
+
+**Directory priority:**
+1. `.worktrees/` (preferred — hidden, project-local)
+2. `worktrees/` (alternative)
+3. Ask user if neither exists
+
+**Never** create worktrees without verifying the directory is gitignored (for project-local locations).
+
+See the `superpowers:using-git-worktrees` skill for full details.
+
 ## Srclight MCP Server
 
 Srclight provides code intelligence for AI agents. It indexes the codebase and exposes MCP tools for symbol search, call graphs, git change intelligence, and semantic search.
