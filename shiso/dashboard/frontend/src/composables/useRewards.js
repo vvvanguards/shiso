@@ -7,7 +7,7 @@ import {
 } from '../api.js'
 
 function defaultRewardsForm() {
-  return { financial_account_id: null, program_name: '', program_type: 'points', unit_name: '', cents_per_unit: null }
+  return { scraper_login_id: null, financial_account_id: null, membership_id: '', program_name: '', program_type: 'points', unit_name: '', cents_per_unit: null, current_balance: null }
 }
 
 const rewards = shallowRef([])
@@ -35,11 +35,14 @@ export function useRewards() {
       rewardsDialogEdit.value = true
       rewardsEditId.value = reward.program_id
       rewardsForm.value = {
+        scraper_login_id: reward.scraper_login_id,
         financial_account_id: reward.account_id,
+        membership_id: reward.membership_id || '',
         program_name: reward.program_name,
         program_type: reward.program_type || 'points',
         unit_name: reward.unit_name || '',
         cents_per_unit: reward.cents_per_unit,
+        current_balance: reward.balance,
       }
     } else {
       rewardsDialogEdit.value = false
