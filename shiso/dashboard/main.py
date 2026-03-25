@@ -46,8 +46,13 @@ def health():
     return {"status": "ok", "service": "dashboard", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
-def _queue_sync_run(login_id: int, *, account_filter: str | None = None) -> int | None:
-    """Create a sync run record with status=queued. Returns None if already queued/running."""
+def _queue_sync_run(login_id: int, *, account_filter: str | None = None, force: bool = False) -> tuple[int | None, str | None]:
+    """Create a sync run record with status=queued.
+
+    Returns (run_id, conflict_status) where conflict_status is None on success,
+    'already_queued' if a run is queued/running and force=False,
+    'running' if a run is actively executing and force=True was passed.
+    """
     normalized_filter = str(account_filter or "").strip() or None
     with scraper.SessionLocal() as session:
         login = session.get(scraper.ScraperLogin, login_id)
@@ -56,15 +61,21 @@ def _queue_sync_run(login_id: int, *, account_filter: str | None = None) -> int 
         if not login.enabled:
             raise HTTPException(status_code=400, detail="Login is disabled")
 
-        # Skip if this login already has a queued or running sync
-        already = (
+        existing = (
             session.query(scraper.ScraperLoginSyncRun)
             .filter_by(scraper_login_id=login_id)
             .filter(scraper.ScraperLoginSyncRun.status.in_(["queued", "running"]))
             .first()
         )
-        if already:
-            return None
+
+        if existing:
+            if existing.status == "running":
+                return (None, "running")
+            if not force:
+                return (None, "already_queued")
+            # force=True and queued — cancel the old run and create a new one
+            existing.status = "cancelled"
+            existing.finished_at = datetime.utcnow()
 
         login.last_sync_status = "queued"
         login.last_sync_error = None
@@ -79,7 +90,7 @@ def _queue_sync_run(login_id: int, *, account_filter: str | None = None) -> int 
         session.add(run)
         session.commit()
         session.refresh(run)
-        return run.id
+        return (run.id, None)
 
 
 class SnapshotResponse(BaseModel):
@@ -354,6 +365,7 @@ class LoginSyncRequest(BaseModel):
 
 class SingleLoginSyncRequest(BaseModel):
     account_filter: Optional[str] = None
+    force: bool = False
 
 
 @app.post("/api/logins/import/start")
@@ -518,9 +530,10 @@ def _candidate_to_dict(candidate, existing_login) -> dict:
 @app.post("/api/logins/{login_id}/sync", response_model=LoginSyncStartResponse)
 def sync_login(login_id: int, req: SingleLoginSyncRequest | None = None):
     account_filter = req.account_filter if req else None
-    run_id = _queue_sync_run(login_id, account_filter=account_filter)
-    if run_id is None:
-        return LoginSyncStartResponse(run_id=0, status="already_queued", account_filter=account_filter)
+    force = req.force if req else False
+    run_id, conflict = _queue_sync_run(login_id, account_filter=account_filter, force=force)
+    if conflict:
+        return LoginSyncStartResponse(run_id=0, status=conflict, account_filter=account_filter)
     return LoginSyncStartResponse(run_id=run_id, status="queued", account_filter=account_filter)
 
 

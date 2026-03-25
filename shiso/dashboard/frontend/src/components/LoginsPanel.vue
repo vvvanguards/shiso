@@ -51,7 +51,7 @@
       <Column header="" style="width: 8rem">
         <template #body="{ data }">
           <div class="flex gap-1">
-            <Button @click="emit('sync', data)" icon="pi pi-sync" severity="success" text rounded size="small" :disabled="!data.enabled || data.last_sync_status === 'queued'" v-tooltip.top="'Sync now'" />
+            <Button @click="emit('sync', data)" icon="pi pi-sync" severity="success" text rounded size="small" :disabled="!data.enabled" v-tooltip.top="'Sync now'" />
             <Button @click="emit('edit', data)" icon="pi pi-pencil" severity="secondary" text rounded size="small" v-tooltip.top="'Edit'" />
             <Button @click="emit('toggle', data)" :icon="data.enabled ? 'pi pi-pause' : 'pi pi-play'" severity="info" text rounded size="small" v-tooltip.top="data.enabled ? 'Pause' : 'Resume'" />
             <Button @click="emit('delete', data)" icon="pi pi-trash" severity="danger" text rounded size="small" v-tooltip.top="'Delete'" />

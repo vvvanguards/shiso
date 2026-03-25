@@ -69,12 +69,19 @@ export function useLogins() {
     try {
       const result = await apiSyncLogin(login.id, options)
       if (result.status === 'already_queued') {
-        toast.add({ severity: 'info', summary: 'Already Queued', detail: `${login.label} already has a sync in progress`, life: 3000 })
-        return
+        // Re-queue with force to cancel the stale queued run
+        const forceOptions = { ...options, force: true }
+        await apiSyncLogin(login.id, forceOptions)
+        const idx = logins.value.findIndex(l => l.id === login.id)
+        if (idx >= 0) logins.value[idx].last_sync_status = 'queued'
+        toast.add({ severity: 'info', summary: 'Re-queued', detail: `${login.label} sync re-queued`, life: 3000 })
+      } else if (result.status === 'running') {
+        toast.add({ severity: 'warn', summary: 'In Progress', detail: `${login.label} sync already running`, life: 4000 })
+      } else {
+        const idx = logins.value.findIndex(l => l.id === login.id)
+        if (idx >= 0) logins.value[idx].last_sync_status = 'queued'
+        toast.add({ severity: 'info', summary: 'Queued', detail: successDetail || `${login.label} queued for sync`, life: 3000 })
       }
-      const idx = logins.value.findIndex(l => l.id === login.id)
-      if (idx >= 0) logins.value[idx].last_sync_status = 'queued'
-      toast.add({ severity: 'info', summary: 'Queued', detail: successDetail || `${login.label} queued for sync`, life: 3000 })
     } catch (err) {
       toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
     }
