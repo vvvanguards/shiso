@@ -12,20 +12,42 @@ except ImportError:
 
 from .database import SessionLocal, init_db
 from .models.accounts import (
+    AccountSnapshot,
     FinancialAccount,
     PromoAprPeriod,
+    ProviderMapping,
     RewardsProgram,
     RewardsBalance,
     ScraperLogin,
     ScraperLoginSyncRun,
 )
-from .services.accounts_db import AccountsDB
+from .services.accounts_db import (
+    AccountsDB,
+    apply_matched_results,
+    create_import_session,
+    delete_import_session,
+    get_import_candidates,
+    get_import_session,
+    refresh_import_session_counts,
+)
 from .services.crypto import encrypt
 from .services.password_import import parse_csv
+from .services.provider_matcher import match_providers, match_providers_sync
 from .services.sync import run_sync, create_sync_run
 from .agent.run import load_accounts, run_scrapers
-from .models.tools import ToolRunOutput
-from .tools import get_workflow, list_workflows
+from .agent.workflow_drafts import (
+    capture_workflow_revision_suggestion,
+    draft_workflow_definition,
+    list_workflow_revision_suggestions,
+    update_workflow_revision_suggestion_status,
+)
+from .models.tools import (
+    ProviderPlaybookRecord,
+    ToolRunOutput,
+    WorkflowDefinitionRecord,
+    WorkflowRevisionSuggestionRecord,
+)
+from .tools import delete_workflow_definition, get_workflow, list_workflows, save_workflow_definition
 
 # Provider keys come from the TOML config (scraper routing only).
 _CONFIG_PATH = Path(__file__).parent / "config" / "scraper.toml"
@@ -45,24 +67,43 @@ __all__ = [
     "SessionLocal",
     "init_db",
     # Models
+    "AccountSnapshot",
     "FinancialAccount",
     "PromoAprPeriod",
+    "ProviderMapping",
     "RewardsProgram",
     "RewardsBalance",
     "ScraperLogin",
     "ScraperLoginSyncRun",
     "ToolRunOutput",
+    "ProviderPlaybookRecord",
+    "WorkflowDefinitionRecord",
+    "WorkflowRevisionSuggestionRecord",
     # Services
     "AccountsDB",
     "PROVIDER_KEYS",
+    "apply_matched_results",
+    "create_import_session",
+    "delete_import_session",
     "encrypt",
+    "get_import_candidates",
+    "get_import_session",
     "parse_csv",
+    "match_providers",
+    "match_providers_sync",
+    "refresh_import_session_counts",
     "load_accounts",
     # Scraper operations
     "run_sync",
     "create_sync_run",
     "run_scrapers",
+    "draft_workflow_definition",
+    "capture_workflow_revision_suggestion",
+    "list_workflow_revision_suggestions",
+    "update_workflow_revision_suggestion_status",
     # Workflows
     "get_workflow",
     "list_workflows",
+    "save_workflow_definition",
+    "delete_workflow_definition",
 ]

@@ -20,17 +20,76 @@ from ..models.accounts import (
     FinancialAccountIdentifier,
     FinancialAccountLogin,
     FinancialAccountType,
+    ImportCandidate,
+    ImportSession,
     PromoAprPeriod,
+    ProviderMapping,
     RewardsProgram,
     RewardsBalance,
     ScraperLogin,
 )
 
+BASELINE_PROVIDERS = [
+    {"domain_pattern": "chase.com", "provider_key": "chase", "label": "Chase", "account_type": "Credit Card"},
+    {"domain_pattern": "americanexpress.com", "provider_key": "amex", "label": "Amex", "account_type": "Credit Card"},
+    {"domain_pattern": "citi.com", "provider_key": "citi", "label": "Citi", "account_type": "Credit Card"},
+    {"domain_pattern": "citicards.com", "provider_key": "citi", "label": "Citi", "account_type": "Credit Card"},
+    {"domain_pattern": "capitalone.com", "provider_key": "capital_one", "label": "Capital One", "account_type": "Financial"},
+    {"domain_pattern": "discover.com", "provider_key": "discover", "label": "Discover", "account_type": "Credit Card"},
+    {"domain_pattern": "barclays.com", "provider_key": "barclays", "label": "Barclays", "account_type": "Credit Card"},
+    {"domain_pattern": "bfrb.bankofamerica.com", "provider_key": "bofa", "label": "Bank of America", "account_type": "Credit Card"},
+    {"domain_pattern": "nipsco.com", "provider_key": "nipsco", "label": "NIPSCO", "account_type": "Utility"},
+    {"domain_pattern": "amwater.com", "provider_key": "american_water", "label": "American Water", "account_type": "Utility"},
+    {"domain_pattern": "indianaamericanwater.com", "provider_key": "american_water", "label": "American Water", "account_type": "Utility"},
+    {"domain_pattern": "duke-energy.com", "provider_key": "duke_energy", "label": "Duke Energy", "account_type": "Utility"},
+    {"domain_pattern": "xfinity.com", "provider_key": "xfinity", "label": "Xfinity", "account_type": "Utility"},
+    {"domain_pattern": "comcast.com", "provider_key": "xfinity", "label": "Xfinity", "account_type": "Utility"},
+    {"domain_pattern": "att.com", "provider_key": "att", "label": "AT&T", "account_type": "Utility"},
+    {"domain_pattern": "verizon.com", "provider_key": "verizon", "label": "Verizon", "account_type": "Utility"},
+    {"domain_pattern": "t-mobile.com", "provider_key": "tmobile", "label": "T-Mobile", "account_type": "Utility"},
+    {"domain_pattern": "spectrum.com", "provider_key": "spectrum", "label": "Spectrum", "account_type": "Utility"},
+    {"domain_pattern": "geico.com", "provider_key": "geico", "label": "GEICO", "account_type": "Other"},
+    {"domain_pattern": "progressive.com", "provider_key": "progressive", "label": "Progressive", "account_type": "Other"},
+    {"domain_pattern": "statefarm.com", "provider_key": "state_farm", "label": "State Farm", "account_type": "Other"},
+    {"domain_pattern": "ally.com", "provider_key": "ally", "label": "Ally", "account_type": "Bank"},
+    {"domain_pattern": "sofi.com", "provider_key": "sofi", "label": "SoFi", "account_type": "Bank"},
+    {"domain_pattern": "marcus.com", "provider_key": "marcus", "label": "Marcus", "account_type": "Bank"},
+    {"domain_pattern": "truist.com", "provider_key": "truist", "label": "Truist", "account_type": "Bank"},
+    {"domain_pattern": "tiaabank.com", "provider_key": "tiaa", "label": "TIAA Bank", "account_type": "Bank"},
+    {"domain_pattern": "citbank.com", "provider_key": "cit_bank", "label": "CIT Bank", "account_type": "Bank"},
+    {"domain_pattern": "fidelity.com", "provider_key": "fidelity", "label": "Fidelity", "account_type": "Bank"},
+    {"domain_pattern": "fidelityrewards.com", "provider_key": "fidelity", "label": "Fidelity", "account_type": "Credit Card"},
+    {"domain_pattern": "schwab.com", "provider_key": "schwab", "label": "Schwab", "account_type": "Bank"},
+    {"domain_pattern": "vanguard.com", "provider_key": "vanguard", "label": "Vanguard", "account_type": "Bank"},
+    {"domain_pattern": "robinhood.com", "provider_key": "robinhood", "label": "Robinhood", "account_type": "Bank"},
+    {"domain_pattern": "webull.com", "provider_key": "webull", "label": "Webull", "account_type": "Bank"},
+    {"domain_pattern": "etrade.com", "provider_key": "etrade", "label": "E*TRADE", "account_type": "Bank"},
+    {"domain_pattern": "coinbase.com", "provider_key": "coinbase", "label": "Coinbase", "account_type": "Bank"},
+    {"domain_pattern": "venmo.com", "provider_key": "venmo", "label": "Venmo", "account_type": "Bank"},
+    {"domain_pattern": "paypal.com", "provider_key": "paypal", "label": "PayPal", "account_type": "Bank"},
+    {"domain_pattern": "navyfederal.org", "provider_key": "navy_federal", "label": "Navy Federal", "account_type": "Bank"},
+    {"domain_pattern": "pnc.com", "provider_key": "pnc", "label": "PNC", "account_type": "Bank"},
+    {"domain_pattern": "huntington.com", "provider_key": "huntington", "label": "Huntington", "account_type": "Bank"},
+    {"domain_pattern": "regions.com", "provider_key": "regions", "label": "Regions", "account_type": "Bank"},
+    {"domain_pattern": "wellsfargo.com", "provider_key": "wells_fargo", "label": "Wells Fargo", "account_type": "Bank"},
+    {"domain_pattern": "bankofamerica.com", "provider_key": "bofa", "label": "Bank of America", "account_type": "Bank"},
+    {"domain_pattern": "usaa.com", "provider_key": "usaa", "label": "USAA", "account_type": "Bank"},
+    {"domain_pattern": "citizensbankonline.com", "provider_key": "citizens", "label": "Citizens", "account_type": "Bank"},
+    {"domain_pattern": "loancare.com", "provider_key": "loancare", "label": "LoanCare", "account_type": "Loan"},
+    {"domain_pattern": "myroundpoint.com", "provider_key": "roundpoint", "label": "RoundPoint", "account_type": "Loan"},
+    {"domain_pattern": "nelnet.com", "provider_key": "nelnet", "label": "Nelnet", "account_type": "Loan"},
+    {"domain_pattern": "navient.com", "provider_key": "navient", "label": "Navient", "account_type": "Loan"},
+    {"domain_pattern": "mohela.com", "provider_key": "mohela", "label": "MOHELA", "account_type": "Loan"},
+    {"domain_pattern": "salliemae.com", "provider_key": "sallie_mae", "label": "Sallie Mae", "account_type": "Loan"},
+]
+
 
 @dataclass
 class SnapshotView:
+    id: int
     provider_key: str
     institution: str
+    scraper_login_id: int | None
     display_name: str | None
     account_number: str | None
     account_mask: str | None
@@ -44,6 +103,9 @@ class SnapshotView:
     last_payment_date: str | None
     credit_limit: float | None
     interest_rate: float | None
+    is_paid: bool | None
+    paid_date: str | None
+    autopay_enabled: bool | None
     account_subcategory: str
     account_category: str
     balance_type: str
@@ -68,15 +130,19 @@ class AccountsDB:
         captured_at = datetime.utcnow()
 
         with self.session() as session:
-            # Resolve institution and account_type from the ScraperLogin record
             login_id = results[0].get("login_id") if results else None
             login = session.get(ScraperLogin, login_id) if login_id else None
             institution = (login.institution if login and login.institution
                            else provider_key.replace("_", " ").title())
-            acct_type_name = login.account_type if login else "Other"
-            account_type = self._get_or_create_account_type(session, acct_type_name)
             saved: list[SnapshotView] = []
-            for row in results:
+            for i, row in enumerate(results):
+                extracted_type = row.get("account_type")
+                account_type_name = extracted_type if extracted_type else "Other"
+                account_type = self._get_or_create_account_type(session, account_type_name)
+
+                if i == 0 and login:
+                    login.account_type = account_type_name
+
                 account = self._upsert_account(
                     session=session,
                     provider_key=provider_key,
@@ -100,6 +166,9 @@ class AccountsDB:
                         intro_apr_rate=row.get("intro_apr_rate"),
                         intro_apr_end_date=row.get("intro_apr_end_date"),
                         regular_apr=row.get("regular_apr"),
+                        is_paid=row.get("is_paid"),
+                        paid_date=row.get("paid_date"),
+                        autopay_enabled=row.get("autopay_enabled"),
                         raw_extracted_json=row,
                     )
                 )
@@ -125,6 +194,7 @@ class AccountsDB:
                     _snapshot_view_from_values(
                         provider_key=provider_key,
                         institution=institution,
+                        scraper_login_id=row.get("login_id"),
                         account=account,
                         row=row,
                         captured_at=captured_at,
@@ -328,6 +398,7 @@ class AccountsDB:
                 _snapshot_view_from_values(
                     provider_key=account.provider_key,
                     institution=account.institution,
+                    scraper_login_id=account.scraper_login_id,
                     account=account,
                     row=snapshot.raw_extracted_json,
                     captured_at=snapshot.captured_at,
@@ -389,11 +460,15 @@ class AccountsDB:
             else:
                 category["debt_total"] += balance
 
+        rewards_summary = self.get_rewards_summary()
+        total_rewards_value = rewards_summary.get("total_monetary_value", 0.0) or 0.0
+
         return {
             "accounts": len(latest),
             "asset_total": asset_total,
             "debt_total": debt_total,
             "net_balance": asset_total - debt_total,
+            "total_rewards_value": total_rewards_value,
             "by_provider": by_provider,
             "by_category": by_category,
             "by_balance_type": by_balance_type,
@@ -551,12 +626,42 @@ class AccountsDB:
                 .first()
             )
 
+        # Mask suffix match: the agent may extract different-length masks across
+        # runs (e.g. "690050" vs "7935690050").  If the shorter is a suffix of
+        # the longer and the display_name matches, treat them as the same account.
+        if not account and account_mask and display_name:
+            candidates = (
+                session.query(FinancialAccount)
+                .filter_by(provider_key=provider_key, display_name=display_name)
+                .all()
+            )
+            for cand in candidates:
+                cand_mask = _normalize_mask(cand.account_mask) or ""
+                if not cand_mask:
+                    continue
+                if cand_mask.endswith(account_mask) or account_mask.endswith(cand_mask):
+                    account = cand
+                    break
+
+        # Display-name fallback — only when the incoming row has NO mask.
+        # Providers like utilities use address as the stable identifier and
+        # may not always return a mask.  When a mask IS present, we rely on
+        # the suffix-match above to avoid merging distinct cards that share
+        # the same display name (e.g. multiple "WELLS FARGO REWARDS").
+        if not account and display_name and not account_mask:
+            account = (
+                session.query(FinancialAccount)
+                .filter_by(provider_key=provider_key, display_name=display_name)
+                .first()
+            )
+
         if not account:
             account = FinancialAccount(
                 account_type_id=account_type_id,
                 provider_key=provider_key,
                 institution=institution,
                 account_number=account_number,
+                scraper_login_id=row.get("login_id"),
                 created_at=captured_at,
                 updated_at=captured_at,
                 first_seen_at=captured_at,
@@ -565,6 +670,7 @@ class AccountsDB:
             session.flush()
 
         account.display_name = display_name
+        account.account_type_id = account_type_id
         account.account_number = account_number or account.account_number
         account.account_mask = account_mask
         account.address = address
@@ -572,6 +678,8 @@ class AccountsDB:
         account.active = _infer_active(row.get("status"))
         account.last_seen_at = captured_at
         account.last_snapshot_at = captured_at
+        if row.get("login_id"):
+            account.scraper_login_id = row.get("login_id")
         return account
 
     def _find_account_by_identifier(
@@ -1007,12 +1115,13 @@ class AccountsDB:
             )
 
             balances = (
-                session.query(RewardsBalance, RewardsProgram, FinancialAccount)
+                session.query(RewardsBalance, RewardsProgram, FinancialAccount, ScraperLogin)
                 .join(latest_subq,
                     (RewardsBalance.rewards_program_id == latest_subq.c.rewards_program_id)
                     & (RewardsBalance.captured_at == latest_subq.c.max_captured_at))
                 .join(RewardsProgram, RewardsBalance.rewards_program_id == RewardsProgram.id)
-                .join(FinancialAccount, RewardsProgram.financial_account_id == FinancialAccount.id)
+                .join(ScraperLogin, RewardsProgram.scraper_login_id == ScraperLogin.id)
+                .outerjoin(FinancialAccount, RewardsProgram.financial_account_id == FinancialAccount.id)
                 .all()
             )
 
@@ -1020,7 +1129,7 @@ class AccountsDB:
             by_type: dict[str, dict] = {}
             programs: list[dict] = []
 
-            for rb, rp, fa in balances:
+            for rb, rp, fa, sl in balances:
                 value = rb.monetary_value or 0.0
                 total_value += value
 
@@ -1034,10 +1143,13 @@ class AccountsDB:
                     "program_id": rp.id,
                     "program_name": rp.program_name,
                     "program_type": rp.program_type,
-                    "account_id": fa.id,
-                    "account_display_name": fa.display_name,
-                    "account_mask": fa.account_mask,
-                    "institution": fa.institution,
+                    "scraper_login_id": rp.scraper_login_id,
+                    "login_label": sl.label if sl else None,
+                    "account_id": fa.id if fa else None,
+                    "account_display_name": fa.display_name if fa else None,
+                    "account_mask": fa.account_mask if fa else None,
+                    "institution": fa.institution if fa else None,
+                    "membership_id": rp.membership_id,
                     "balance": rb.balance,
                     "monetary_value": rb.monetary_value,
                     "unit_name": rp.unit_name,
@@ -1066,7 +1178,7 @@ class AccountsDB:
             .first()
         )
         raw = latest_snapshot.raw_extracted_json if latest_snapshot else {}
-        name = _normalize_text(raw.get("card_name") or account.display_name)
+        name = _normalize_text(raw.get("account_name") or raw.get("card_name") or account.display_name)
         address = _normalize_text(raw.get("address") or account.address)
         if name and address:
             return (account.provider_key, "name_address", f"{name}|{address}")
@@ -1074,10 +1186,100 @@ class AccountsDB:
             return (account.provider_key, "name", name)
         return None
 
+    def get_provider_mappings(self, source: str | None = None) -> list[dict]:
+        """Return all provider mappings, optionally filtered by source."""
+        with self.session() as session:
+            query = session.query(ProviderMapping)
+            if source:
+                query = query.filter(ProviderMapping.source == source)
+            mappings = query.order_by(ProviderMapping.domain_pattern).all()
+            return [
+                {
+                    "id": m.id,
+                    "domain_pattern": m.domain_pattern,
+                    "provider_key": m.provider_key,
+                    "label": m.label,
+                    "account_type": m.account_type,
+                    "source": m.source,
+                    "confidence": m.confidence,
+                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                    "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+                }
+                for m in mappings
+            ]
+
+    def upsert_provider_mapping(
+        self,
+        domain_pattern: str,
+        provider_key: str,
+        label: str,
+        account_type: str,
+        source: str = "learned",
+        confidence: float | None = None,
+    ) -> ProviderMapping:
+        """Insert or update a provider mapping."""
+        with self.session() as session:
+            existing = session.query(ProviderMapping).filter(
+                ProviderMapping.domain_pattern == domain_pattern
+            ).first()
+            if existing:
+                existing.provider_key = provider_key
+                existing.label = label
+                existing.account_type = account_type
+                existing.source = source
+                existing.confidence = confidence
+            else:
+                mapping = ProviderMapping(
+                    domain_pattern=domain_pattern,
+                    provider_key=provider_key,
+                    label=label,
+                    account_type=account_type,
+                    source=source,
+                    confidence=confidence,
+                )
+                session.add(mapping)
+                existing = mapping
+            session.commit()
+            session.refresh(existing)
+            return existing
+
+    def delete_provider_mapping(self, domain_pattern: str) -> bool:
+        """Delete a provider mapping by domain pattern. Returns True if deleted."""
+        with self.session() as session:
+            deleted = session.query(ProviderMapping).filter(
+                ProviderMapping.domain_pattern == domain_pattern
+            ).delete()
+            return deleted > 0
+
+    def seed_baseline_providers(self, providers: list[dict]) -> int:
+        """Seed baseline providers from a list of {domain_pattern, provider_key, label, account_type} dicts.
+        
+        Only inserts if domain_pattern doesn't already exist. Returns count of inserted.
+        """
+        count = 0
+        with self.session() as session:
+            for p in providers:
+                existing = session.query(ProviderMapping).filter(
+                    ProviderMapping.domain_pattern == p["domain_pattern"]
+                ).first()
+                if not existing:
+                    mapping = ProviderMapping(
+                        domain_pattern=p["domain_pattern"],
+                        provider_key=p["provider_key"],
+                        label=p["label"],
+                        account_type=p["account_type"],
+                        source="baseline",
+                    )
+                    session.add(mapping)
+                    count += 1
+            session.commit()
+        return count
+
 
 def _snapshot_view_from_values(
     provider_key: str,
     institution: str,
+    scraper_login_id: int | None,
     account: FinancialAccount,
     row: dict,
     captured_at: datetime,
@@ -1087,9 +1289,11 @@ def _snapshot_view_from_values(
     current_balance = row.get("current_balance")
     signed_balance = None if current_balance is None else current_balance * (1 if balance_type == "asset" else -1)
     return SnapshotView(
+        id=account.id,
         provider_key=provider_key,
         institution=institution,
-        display_name=row.get("card_name") or account.display_name,
+        scraper_login_id=scraper_login_id,
+        display_name=row.get("account_name") or row.get("card_name") or account.display_name,
         account_number=account.account_number,
         account_mask=account.account_mask,
         address=account.address,
@@ -1102,6 +1306,9 @@ def _snapshot_view_from_values(
         last_payment_date=row.get("last_payment_date"),
         credit_limit=row.get("credit_limit"),
         interest_rate=row.get("interest_rate") or row.get("regular_apr"),
+        is_paid=row.get("is_paid"),
+        paid_date=row.get("paid_date"),
+        autopay_enabled=row.get("autopay_enabled"),
         account_subcategory=category,
         account_category=category,
         balance_type=balance_type,
@@ -1129,8 +1336,8 @@ def _infer_active(status: Optional[str]) -> bool:
 
 
 def _infer_display_name(row: dict, institution: str) -> str:
-    name = row.get("card_name") or row.get("label") or row.get("address") or institution
-    # Clean up common noise from scraped card names
+    name = row.get("account_name") or row.get("card_name") or row.get("label") or row.get("address") or institution
+    # Clean up common noise from scraped account names
     name = re.sub(r"[®™�]", "", name)
     name = re.sub(r"\(TM\)", "", name, flags=re.IGNORECASE)
     name = re.sub(r"^American Express\s+", "", name)
@@ -1206,7 +1413,7 @@ def _infer_account_category(provider_key: str, row: dict) -> str:
 
     text = " ".join(
         str(value)
-        for value in [row.get("card_name"), row.get("label"), row.get("status"), row.get("address")]
+        for value in [row.get("account_name") or row.get("card_name"), row.get("label"), row.get("status"), row.get("address")]
         if value
     ).lower()
 
@@ -1244,3 +1451,234 @@ _BALANCE_TYPE_MAP = {
 
 def _infer_balance_type(category: str) -> str:
     return _BALANCE_TYPE_MAP.get(category, "liability")
+
+
+# Import Session CRUD
+
+def create_import_session(filename: str, rows: list[dict]) -> ImportSession:
+    """Create a new import session with candidates from parsed CSV rows."""
+    with SessionLocal() as session:
+        session_obj = ImportSession(
+            filename=filename,
+            status="pending",
+            total_count=len(rows),
+        )
+        session.add(session_obj)
+        session.flush()
+
+        candidates = []
+        for i, row in enumerate(rows):
+            candidates.append(ImportCandidate(
+                session_id=session_obj.id,
+                row_index=i,
+                name=row.get("name", ""),
+                url=row.get("url", ""),
+                domain=row.get("domain", ""),
+                username=row.get("username", ""),
+                password=row.get("password", ""),
+                status="pending",
+            ))
+        session.add_all(candidates)
+        session.commit()
+        session.refresh(session_obj)
+        return session_obj
+
+
+def get_import_session(session_id: int) -> ImportSession | None:
+    """Get an import session by ID."""
+    with SessionLocal() as session:
+        return session.get(ImportSession, session_id)
+
+
+def get_import_candidates(session_id: int) -> list[ImportCandidate]:
+    """Get all candidates for an import session."""
+    with SessionLocal() as session:
+        return session.query(ImportCandidate).filter(
+            ImportCandidate.session_id == session_id
+        ).order_by(ImportCandidate.row_index).all()
+
+
+def get_import_candidate(candidate_id: int) -> ImportCandidate | None:
+    """Get a single import candidate."""
+    with SessionLocal() as session:
+        return session.get(ImportCandidate, candidate_id)
+
+
+def update_import_candidate(
+    candidate_id: int,
+    provider_key: str | None = None,
+    label: str | None = None,
+    account_type: str | None = None,
+    status: str | None = None,
+    match_confidence: float | None = None,
+    match_type: str | None = None,
+    is_new_provider: bool | None = None,
+) -> ImportCandidate | None:
+    """Update a single candidate's match info or status."""
+    with SessionLocal() as session:
+        candidate = session.get(ImportCandidate, candidate_id)
+        if not candidate:
+            return None
+        if provider_key is not None:
+            candidate.provider_key = provider_key
+        if label is not None:
+            candidate.label = label
+        if account_type is not None:
+            candidate.account_type = account_type
+        if status is not None:
+            candidate.status = status
+        if match_confidence is not None:
+            candidate.match_confidence = match_confidence
+        if match_type is not None:
+            candidate.match_type = match_type
+        if is_new_provider is not None:
+            candidate.is_new_provider = is_new_provider
+        session.commit()
+        session.refresh(candidate)
+        return candidate
+
+
+def accept_import_candidate(candidate_id: int, provider_key: str, label: str, account_type: str) -> ImportCandidate | None:
+    """Mark a candidate as accepted with the given provider info."""
+    with SessionLocal() as session:
+        candidate = session.get(ImportCandidate, candidate_id)
+        if not candidate:
+            return None
+        candidate.status = "accepted"
+        candidate.provider_key = provider_key
+        candidate.label = label
+        candidate.account_type = account_type
+        session.commit()
+        session.refresh(candidate)
+        return candidate
+
+
+def reject_import_candidate(candidate_id: int) -> ImportCandidate | None:
+    """Mark a candidate as rejected."""
+    with SessionLocal() as session:
+        candidate = session.get(ImportCandidate, candidate_id)
+        if not candidate:
+            return None
+        candidate.status = "rejected"
+        session.commit()
+        session.refresh(candidate)
+        return candidate
+
+
+def batch_update_candidates(
+    candidate_ids: list[int],
+    status: str | None = None,
+    provider_key: str | None = None,
+    label: str | None = None,
+    account_type: str | None = None,
+) -> int:
+    """Batch update multiple candidates. Returns count updated."""
+    if not candidate_ids:
+        return 0
+    with SessionLocal() as session:
+        session.query(ImportCandidate).filter(
+            ImportCandidate.id.in_(candidate_ids)
+        ).update({
+            **({} if status is None else {"status": status}),
+            **({} if provider_key is None else {"provider_key": provider_key}),
+            **({} if label is None else {"label": label}),
+            **({} if account_type is None else {"account_type": account_type}),
+        }, synchronize_session=False)
+        session.commit()
+        return len(candidate_ids)
+
+
+def apply_matched_results(session_id: int, matched_mappings: list[dict]) -> int:
+    """Apply match results to candidates in a session. Returns count updated.
+
+    matched_mappings: list of {row_id, provider_key, label, account_type, confidence, match_type}
+    """
+    if not matched_mappings:
+        return 0
+    row_id_to_match: dict[int, dict] = {m["row_id"]: m for m in matched_mappings}
+    with SessionLocal() as session:
+        candidates = session.query(ImportCandidate).filter(
+            ImportCandidate.session_id == session_id
+        ).all()
+        updated = 0
+        for candidate in candidates:
+            match = row_id_to_match.get(candidate.row_index)
+            if match:
+                candidate.provider_key = match.get("provider_key")
+                candidate.label = match.get("label")
+                candidate.account_type = match.get("account_type")
+                candidate.match_confidence = match.get("confidence")
+                candidate.match_type = match.get("match_type")
+                candidate.status = "matched"
+                updated += 1
+        session.commit()
+        return updated
+
+
+def refresh_import_session_counts(session_id: int) -> dict:
+    """Recalculate and update session counts from candidates."""
+    with SessionLocal() as session:
+        session_obj = session.get(ImportSession, session_id)
+        if not session_obj:
+            return {}
+        candidates = session.query(ImportCandidate).filter(
+            ImportCandidate.session_id == session_id
+        ).all()
+        total = len(candidates)
+        processed = sum(1 for c in candidates if c.status != "pending")
+        high_conf = sum(1 for c in candidates if (c.match_confidence or 0) >= 0.9 and c.status == "pending")
+        needs_review = sum(1 for c in candidates if (c.match_confidence or 0) < 0.9 and c.status == "pending")
+        accepted = sum(1 for c in candidates if c.status == "accepted")
+        rejected = sum(1 for c in candidates if c.status in ("rejected", "skipped"))
+        session_obj.total_count = total
+        session_obj.processed_count = processed
+        session_obj.high_confidence_count = high_conf
+        session_obj.needs_review_count = needs_review
+        session_obj.accepted_count = accepted
+        session_obj.rejected_count = rejected
+        session.commit()
+        return {
+            "total": total,
+            "processed": processed,
+            "high_confidence": high_conf,
+            "needs_review": needs_review,
+            "accepted": accepted,
+            "rejected": rejected,
+        }
+
+
+def get_import_progress(session_id: int) -> dict:
+    """Get current progress of an import session."""
+    with SessionLocal() as session:
+        session_obj = session.get(ImportSession, session_id)
+        if not session_obj:
+            return {}
+        candidates = session.query(ImportCandidate).filter(
+            ImportCandidate.session_id == session_id
+        ).all()
+        total = len(candidates)
+        by_status = {}
+        for c in candidates:
+            by_status[c.status] = by_status.get(c.status, 0) + 1
+        return {
+            "session_id": session_id,
+            "status": session_obj.status,
+            "total": total,
+            "processed": session_obj.processed_count,
+            "high_confidence": session_obj.high_confidence_count,
+            "needs_review": session_obj.needs_review_count,
+            "accepted": session_obj.accepted_count,
+            "rejected": session_obj.rejected_count,
+            "by_status": by_status,
+        }
+
+
+def delete_import_session(session_id: int) -> bool:
+    """Delete an import session and all its candidates."""
+    with SessionLocal() as session:
+        session_obj = session.get(ImportSession, session_id)
+        if not session_obj:
+            return False
+        session.delete(session_obj)
+        session.commit()
+        return True

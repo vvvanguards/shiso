@@ -6,8 +6,22 @@ export async function fetchDashboard() {
   return response.json()
 }
 
-export async function fetchLogins() {
-  const response = await fetch(`${API_BASE}/logins`)
+export async function updateSnapshotPaidStatus(snapshotId, isPaid) {
+  const response = await fetch(`${API_BASE}/snapshots/${snapshotId}/paid-status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_paid: isPaid }),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to update paid status')
+  }
+  return response.json()
+}
+
+export async function fetchLogins(includeDeleted = false) {
+  const url = `${API_BASE}/logins${includeDeleted ? '?include_deleted=true' : ''}`
+  const response = await fetch(url)
   if (!response.ok) throw new Error('Failed to fetch logins')
   return response.json()
 }
@@ -49,10 +63,12 @@ export async function deleteLogin(id) {
   return response.json()
 }
 
-export async function syncLogin(id, { force = false } = {}) {
-  const params = force ? '?force=true' : ''
-  const response = await fetch(`${API_BASE}/logins/${id}/sync${params}`, {
+export async function syncLogin(id, options = null) {
+  const hasOptions = options && Object.keys(options).length > 0
+  const response = await fetch(`${API_BASE}/logins/${id}/sync`, {
     method: 'POST',
+    headers: hasOptions ? { 'Content-Type': 'application/json' } : undefined,
+    body: hasOptions ? JSON.stringify(options) : undefined,
   })
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
@@ -80,14 +96,50 @@ export async function fetchProviders() {
   return response.json()
 }
 
-export async function importPreview(file) {
+export async function importStart(file) {
   const form = new FormData()
   form.append('file', file)
-  const response = await fetch(`${API_BASE}/logins/import/preview`, {
+  const response = await fetch(`${API_BASE}/logins/import/start`, {
     method: 'POST',
     body: form,
   })
-  if (!response.ok) throw new Error('Failed to parse CSV')
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Import failed')
+  }
+  return response.json()
+}
+
+export async function getImportSession(sessionId) {
+  const response = await fetch(`${API_BASE}/logins/import/${sessionId}`)
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to get import session')
+  }
+  return response.json()
+}
+
+export async function confirmImport(sessionId, selectedIds) {
+  const response = await fetch(`${API_BASE}/logins/import/${sessionId}/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(selectedIds),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Confirm failed')
+  }
+  return response.json()
+}
+
+export async function deleteImport(sessionId) {
+  const response = await fetch(`${API_BASE}/logins/import/${sessionId}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Delete failed')
+  }
   return response.json()
 }
 
@@ -156,28 +208,81 @@ export async function fetchTools() {
   return response.json()
 }
 
+export async function fetchToolDefinition(toolKey) {
+  const response = await fetch(`${API_BASE}/tools/${toolKey}`)
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to fetch tool definition')
+  }
+  return response.json()
+}
+
+export async function draftToolDefinition(data) {
+  const response = await fetch(`${API_BASE}/tools/draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to draft tool definition')
+  }
+  return response.json()
+}
+
+export async function saveToolDefinition(toolKey, data) {
+  const response = await fetch(`${API_BASE}/tools/${toolKey}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to save tool definition')
+  }
+  return response.json()
+}
+
+export async function deleteToolDefinition(toolKey) {
+  const response = await fetch(`${API_BASE}/tools/${toolKey}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to delete tool definition')
+  }
+  return response.json()
+}
+
 export async function fetchToolRuns(toolKey) {
   const response = await fetch(`${API_BASE}/tools/${toolKey}/runs`)
   if (!response.ok) throw new Error('Failed to fetch tool runs')
   return response.json()
 }
 
-export async function importLogins(file, selectedRowIds, overwriteRowIds = []) {
-  const form = new FormData()
-  form.append('file', file)
+export async function fetchWorkflowSuggestions(status = 'open', toolKey = null) {
   const params = new URLSearchParams()
-  params.set('selected', selectedRowIds.join(','))
-  if (overwriteRowIds.length) params.set('overwrite', overwriteRowIds.join(','))
-  const response = await fetch(`${API_BASE}/logins/import?${params}`, {
+  if (status) params.set('status', status)
+  if (toolKey) params.set('tool_key', toolKey)
+  const response = await fetch(`${API_BASE}/tools/suggestions${params.toString() ? `?${params}` : ''}`)
+  if (!response.ok) throw new Error('Failed to fetch workflow suggestions')
+  return response.json()
+}
+
+export async function updateWorkflowSuggestionStatus(id, status) {
+  const response = await fetch(`${API_BASE}/tools/suggestions/${id}/status`, {
     method: 'POST',
-    body: form,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
   })
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
-    throw new Error(err.detail || 'Import failed')
+    throw new Error(err.detail || 'Failed to update workflow suggestion')
   }
   return response.json()
 }
+
+
 
 export async function fetchProblemLogins() {
   const response = await fetch(`${API_BASE}/logins/problems`)
@@ -192,6 +297,58 @@ export async function startInteractiveAuth(loginId) {
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
     throw new Error(err.detail || 'Failed to start interactive auth')
+  }
+  return response.json()
+}
+
+export async function fetchInteractiveAuthStatus(loginId) {
+  const response = await fetch(`${API_BASE}/logins/${loginId}/interactive`)
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to fetch interactive auth status')
+  }
+  return response.json()
+}
+
+export async function respondInteractiveAuth(loginId, data) {
+  const response = await fetch(`${API_BASE}/logins/${loginId}/interactive/respond`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to send interactive auth response')
+  }
+  return response.json()
+}
+
+// Agent Sessions — generalized human-in-the-loop
+
+export async function fetchAgentSessions() {
+  const response = await fetch(`${API_BASE}/agent-sessions`)
+  if (!response.ok) throw new Error('Failed to fetch agent sessions')
+  return response.json()
+}
+
+export async function fetchAgentSession(runId) {
+  const response = await fetch(`${API_BASE}/agent-sessions/${runId}`)
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to fetch agent session')
+  }
+  return response.json()
+}
+
+export async function respondAgentSession(runId, data) {
+  const response = await fetch(`${API_BASE}/agent-sessions/${runId}/respond`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to send response to agent')
   }
   return response.json()
 }

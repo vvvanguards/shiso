@@ -2,13 +2,12 @@ This is an American Express account dashboard.
 
 Amex-specific tips:
 - Product names include "Gold Card", "Hilton Honors", "Blue Cash", "Personal Loan", etc.
+- Use the `/overview` page as the source of truth for the account list
 - The overview may group cards vs loans — check both sections
-- Click into each account's detail page to find credit limit (or "spending power"), interest rate, statement balance, and last payment info
-- Navigate back to the overview after each account to find the next one
-- Check for hidden accounts behind "View more accounts", tabs, collapsed sections, carousels, or pagination
+- During this extraction pass, stay on the overview page and do not click into individual account detail pages
+- Expand hidden accounts with "View more accounts", tabs, collapsed sections, carousels, or pagination before extracting
+- If a field is only visible on detail pages or statements, leave it null here and let later enrichment passes fill it in
 
 Promo APR:
-- Look for "Promotional APR", "Intro APR", "0.00% introductory", or "0% for X months"
-- Find the promo end date ("ends on", "through", "valid until")
-- Note the regular/go-to APR shown alongside promo offers
-- Check account details or statements for promo balance transfer offers
+- Capture promo APR fields only when they are already visible on the overview page
+- If the overview does not show promo APR details, leave them null so detail enrichment or statement parsing can populate them later

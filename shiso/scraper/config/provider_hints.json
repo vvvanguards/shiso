@@ -1,26 +1,26 @@
 {
   "amex": {
     "failed_actions": [
-      "Stale element indices (e.g., index=1338) fail on Amex \u2014 always refresh browser state before clicking after page changes",
-      "Clicking into individual account detail pages causes Observer failure \u2014 extract all data from dashboard only",
-      "Scroll actions fail on Amex pages due to JavaScript eval restrictions",
-      "2FA/verification required during pause_for_human actions \u2014 may need manual intervention or alternative authentication handling"
+      "2FA/verification blocks all pause_for_human actions \u2014 scraper cannot proceed without manual auth bypass",
+      "All pause_for_human steps (4-9) fail with 2FA error \u2014 indicates login session is being challenged",
+      "Scraper never reaches dashboard due to 2FA blocking \u2014 authentication flow needs adjustment",
+      "Login session expires during pause_for_human \u2014 requires immediate action or auth refresh"
     ],
     "effective_patterns": [
-      "Dashboard at /overview exposes all 9 account balances in one view \u2014 no detail page navigation needed",
-      "'View more accounts' button successfully expands full account list on dashboard",
-      "PDF enrichment extracts statement_date, due_date, minimum_payment, statement_balance, credit_limit from downloaded statements",
+      "Dashboard at /overview exposes all account balances in one view \u2014 no detail page navigation needed",
+      "View more accounts button expands full account list on dashboard",
+      "PDF enrichment extracts statement_date, due_date, minimum_payment, statement_balance, credit_limit",
       "BLOCKING_OVERLAY and CONTENT_LOADING anomalies can be resolved without re-authentication"
     ],
     "navigation_tips": [
-      "CRITICAL: Never click into individual account detail pages \u2014 Observer fails there; extract all data from /overview dashboard",
-      "Use '/overview' URL directly to return to multi-card dashboard \u2014 'Home' link goes to single-card view",
+      "CRITICAL: Never click into individual account detail pages \u2014 Observer fails there",
+      "Use /overview URL directly to return to multi-card dashboard \u2014 Home link goes to single-card view",
       "Navigate to Payments page for due_date info rather than account detail pages",
-      "Amazon Business Prime Card (01009) often shows null balance/due_date \u2014 treat as complete if no data visible",
       "Minimize page transitions after login \u2014 Amex frequently re-authenticates upon clicking account management links",
-      "Statement downloads require ~9 steps per account \u2014 expect 70+ steps for full statement pass across all accounts"
+      "Statement downloads require ~9 steps per account \u2014 expect 70+ steps for full statement pass across all accounts",
+      "If 2FA appears, scraper must skip pause_for_human or use alternative auth handling"
     ],
-    "updated_at": "2026-03-14T22:54:55.839943"
+    "updated_at": "2026-03-18T17:20:00.660318"
   },
   "chase": {
     "failed_actions": [
@@ -42,25 +42,25 @@
   },
   "fidelity": {
     "failed_actions": [
-      "pause_for_human failed repeatedly with 2FA/verification required",
-      "Model output validation failed - missing required 'done' field in response",
-      "Scraper unable to bypass Fidelity's 2FA authentication flow"
+      "pause_for_human failed 5 times with 2FA/verification required",
+      "Scraper cannot bypass Fidelity's 2FA authentication wall",
+      "All login attempts blocked after initial page navigation"
     ],
     "effective_patterns": [
-      "Login page navigation works initially before 2FA wall",
-      "Click/wait actions function properly until verification step",
+      "Login page navigation works before 2FA wall",
+      "Click/wait actions function until verification step",
       "Fidelity login page is accessible at start_url"
     ],
     "navigation_tips": [
       "Fidelity requires manual 2FA verification that cannot be automated",
       "Consider using Fidelity API endpoints instead of web scraping",
-      "Account data may require authenticated API access rather than browser automation",
+      "Account data requires authenticated API access rather than browser automation",
       "Fidelity actively blocks automated login attempts with 2FA challenges",
-      "No public API exists for account data without prior authentication",
       "Web scraping Fidelity login pages is not viable for account discovery",
-      "Consider alternative data sources or Fidelity's official data feeds"
+      "Consider alternative data sources or Fidelity's official data feeds",
+      "No public API exists for account data without prior authentication"
     ],
-    "updated_at": "2026-03-18T03:10:03.006426"
+    "updated_at": "2026-03-18T17:25:33.484556"
   },
   "bofa": {
     "failed_actions": [
@@ -81,5 +81,85 @@
       "If login fails, verify credentials and session state before retrying"
     ],
     "updated_at": "2026-03-18T03:13:49.497271"
+  },
+  "cit_bank": {
+    "failed_actions": [
+      "pause_for_human actions failed due to 2FA/verification required",
+      "Model output validation failed: missing 'done' field in response"
+    ],
+    "effective_patterns": [
+      "Navigation steps 2-6 (navigate, click, wait) work before 2FA wall",
+      "Scraper reaches login/verification page successfully"
+    ],
+    "navigation_tips": [
+      "CIT Bank requires 2FA before accessing account data",
+      "2FA verification blocks automated scraping attempts",
+      "Consider alternative data sources or manual verification",
+      "Site redirects to 2FA page after login attempt",
+      "Financial sites often block automated access via 2FA"
+    ],
+    "updated_at": "2026-03-18T17:16:40.514658"
+  },
+  "discover": {
+    "failed_actions": [
+      "pause_for_human actions failing due to 2FA/verification required",
+      "Model output validation error: missing 'done' field in response",
+      "Scraper unable to bypass 2FA verification step"
+    ],
+    "effective_patterns": [
+      "Login page navigation works (universalLogin/ac_main)",
+      "Click actions on initial elements succeed before 2FA block",
+      "Wait/pause actions function until verification required"
+    ],
+    "navigation_tips": [
+      "Discover requires 2FA verification that blocks automated scraping",
+      "This provider may need to be marked as unsupported for automation",
+      "Consider manual verification or alternative data sources",
+      "2FA pages will always fail pause_for_human actions",
+      "Model output must include 'done' field with proper schema",
+      "No dashboard_url available - accounts require login verification",
+      "Provider may need exclusion from automated scraping list"
+    ],
+    "updated_at": "2026-03-18T17:18:36.768690"
+  },
+  "citi": {
+    "failed_actions": [
+      "pause_for_human actions failing due to 2FA/verification required",
+      "Model output format validation error: missing 'done' field in response",
+      "Scraper cannot proceed past login without 2FA verification"
+    ],
+    "effective_patterns": [
+      "Login page navigation works correctly",
+      "Click actions execute successfully before 2FA block",
+      "Citi login flow requires human verification before account access"
+    ],
+    "navigation_tips": [
+      "Citi requires 2FA verification - automated scraping blocked at login",
+      "Wait for human verification before attempting account discovery",
+      "No accounts accessible without completing 2FA verification flow",
+      "Consider using official Citi API or authorized access methods",
+      "2FA verification is mandatory before any account data retrieval",
+      "Scraper must handle verification page or skip to authorized endpoints"
+    ],
+    "updated_at": "2026-03-18T17:21:04.384220"
+  },
+  "robinhood": {
+    "failed_actions": [
+      "pause_for_human fails when 2FA/verification required",
+      "Authentication stops at 2FA checkpoint - no account data retrieved",
+      "All pause_for_human attempts (steps 7-9) failed identically"
+    ],
+    "effective_patterns": [
+      "Login navigation works until 2FA challenge appears",
+      "Account data requires successful 2FA completion",
+      "Single login attempt yields 0 accounts when 2FA blocks access"
+    ],
+    "navigation_tips": [
+      "Robinhood requires 2FA for account access - handle or skip 2FA-required accounts",
+      "Add 2FA detection logic before attempting account scraping",
+      "Consider adding skip logic for accounts requiring manual verification",
+      "2FA challenges block automated scraping - may need alternative auth flow"
+    ],
+    "updated_at": "2026-03-18T17:31:40.941338"
   }
 }

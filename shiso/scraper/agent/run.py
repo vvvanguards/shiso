@@ -21,6 +21,7 @@ from typing import Callable
 
 from ..database import SessionLocal, init_db
 from ..models.accounts import ScraperLogin
+from ..models.sync_type import SyncType
 from ..services.accounts_db import AccountsDB
 from ..services.crypto import decrypt
 from ..services.sync import run_sync
@@ -91,6 +92,7 @@ async def run_scrapers(
     interactive: bool = False,
     account_filter: str | None = None,
     on_log: Callable[[str], None] | None = None,
+    sync_type: SyncType = SyncType.auto,
 ) -> dict:
     accounts = load_accounts(login_ids=login_ids)
     if targets:
@@ -122,11 +124,12 @@ async def run_scrapers(
                 interactive=interactive,
                 account_filter=account_filter,
                 on_log=on_log,
+                sync_type=sync_type,
             )
 
             all_results[name] = sync.results
             persisted_results[name] = sync.persisted
-            all_metrics[name] = sync.metrics
+            all_metrics[name] = sync.metrics.to_dict()
 
             if sync.timed_out:
                 print(f"[{name}] TIMEOUT: {sync.error}")
@@ -158,13 +161,15 @@ async def main(
     download_statements: bool = False,
     interactive: bool = False,
     account_filter: str | None = None,
+    sync_type: SyncType = SyncType.auto,
 ):
     payload = await run_scrapers(
         targets,
         download_statements=download_statements,
         interactive=interactive,
         account_filter=account_filter,
-        on_log=lambda msg: print(msg),
+        on_log=lambda msg: print(msg.encode("ascii", errors="replace").decode("ascii")),
+        sync_type=sync_type,
     )
 
     print("\n=== RESULTS ===")

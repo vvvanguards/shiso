@@ -13,10 +13,13 @@ from typing import Any, Callable
 
 from ..database import SessionLocal
 from ..models.accounts import ScraperLogin, ScraperLoginSyncRun
+from ..models.sync_type import SyncType, get_sync_type_id, resolve_sync_type
+from ..models.tools import ToolRunOutput
 from ..services.accounts_db import AccountsDB
 from ..agent.analyst import analyze_run
 from ..agent.llm import llm_chat
-from ..agent.scraper import scrape_provider
+from ..agent.scraper import ScrapeMetrics, scrape_provider
+from ..agent.workflow_drafts import capture_workflow_revision_suggestion
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +27,16 @@ logger = logging.getLogger(__name__)
 class SyncRun:
     """Tracks a single provider sync run with logging and DB persistence."""
 
-    def __init__(self, login_id: int, provider_key: str, run_id: int):
+    def __init__(self, login_id: int, provider_key: str, run_id: int,
+                 sync_type: SyncType = SyncType.full):
         self.login_id = login_id
         self.provider_key = provider_key
         self.run_id = run_id
+        self.sync_type = sync_type
         self.logs: list[str] = []
         self.results: list[dict] = []
         self.persisted: list[Any] = []
-        self.metrics: dict[str, Any] = {}
+        self.metrics: ScrapeMetrics = ScrapeMetrics()
         self.error: str | None = None
         self.timed_out: bool = False
 
@@ -39,7 +44,7 @@ class SyncRun:
         self.logs.append(msg)
 
 
-def create_sync_run(login_id: int) -> SyncRun:
+def create_sync_run(login_id: int, sync_type: SyncType = SyncType.full) -> SyncRun:
     """Create a ScraperLoginSyncRun record and return a SyncRun tracker."""
     with SessionLocal() as session:
         login = session.get(ScraperLogin, login_id)
@@ -51,9 +56,11 @@ def create_sync_run(login_id: int) -> SyncRun:
         login.last_sync_status = "running"
         login.last_sync_error = None
 
+        sync_type_id = get_sync_type_id(sync_type.value)
         run = ScraperLoginSyncRun(
             scraper_login_id=login.id,
             provider_key=login.provider_key,
+            sync_type_id=sync_type_id,
             status="running",
             started_at=started_at,
         )
@@ -65,6 +72,7 @@ def create_sync_run(login_id: int) -> SyncRun:
             login_id=login.id,
             provider_key=login.provider_key,
             run_id=run.id,
+            sync_type=sync_type,
         )
 
 
@@ -78,7 +86,6 @@ def finalize_sync_run(sync: SyncRun) -> None:
     - "timeout": exceeded provider_timeout limit (may have partial results)
     """
     finished_at = datetime.utcnow()
-    metrics = sync.metrics
 
     with SessionLocal() as session:
         db_run = session.get(ScraperLoginSyncRun, sync.run_id)
@@ -107,8 +114,18 @@ def finalize_sync_run(sync: SyncRun) -> None:
             login.last_sync_snapshot_count = len(sync.persisted)
 
         db_run.finished_at = finished_at
-        db_run.metrics = metrics
+        db_run.metrics = sync.metrics.to_dict()
         login.last_sync_finished_at = finished_at
+
+        # Per-type timestamp tracking
+        if sync.sync_type == SyncType.full:
+            login.last_full_sync_at = finished_at
+            login.needs_full_sync = False
+        elif sync.sync_type == SyncType.balance:
+            login.last_balance_sync_at = finished_at
+        elif sync.sync_type == SyncType.statements:
+            login.last_statements_sync_at = finished_at
+
         session.commit()
 
 
@@ -123,22 +140,32 @@ async def run_sync(
     on_log: Callable[[str], None] | None = None,
     run_id: int | None = None,
     workflow: Any | None = None,
+    human_input_handler: Callable | None = None,
+    sync_type: SyncType = SyncType.auto,
 ) -> SyncRun:
     """Run a full sync for one provider: scrape, persist, analyze.
 
     Creates the sync run record (or reuses an existing one via run_id),
     runs the scraper, persists results, runs post-run analysis, and
     finalizes the run record.
+
+    The *sync_type* controls which passes run.  ``auto`` resolves to
+    ``balance`` when accounts already exist, ``full`` otherwise.
     """
     # Find the login_id — use first login's id for the sync run record
     login_id = logins[0].get("id") if logins else None
     if not login_id:
         raise ValueError(f"No login ID found for {provider_key}")
 
+    # Resolve auto → concrete type before creating the run record
+    if sync_type == SyncType.auto:
+        sync_type = resolve_sync_type(login_id)
+
     if run_id:
-        sync = SyncRun(login_id=login_id, provider_key=provider_key, run_id=run_id)
+        sync = SyncRun(login_id=login_id, provider_key=provider_key,
+                       run_id=run_id, sync_type=sync_type)
     else:
-        sync = create_sync_run(login_id)
+        sync = create_sync_run(login_id, sync_type=sync_type)
 
     def _log(msg: str) -> None:
         sync.on_log(msg)
@@ -155,10 +182,14 @@ async def run_sync(
             account_filter=account_filter,
             on_log=_log,
             workflow=workflow,
+            run_id=sync.run_id,
+            human_input_handler=human_input_handler,
+            sync_type=sync_type,
         )
+
         results = scrape_result.accounts
         sync.results = results
-        sync.metrics = scrape_result.metrics.to_dict()
+        sync.metrics = scrape_result.metrics
 
         # Handle timeout status
         if scrape_result.metrics.timed_out:
@@ -166,9 +197,7 @@ async def run_sync(
             sync.error = scrape_result.metrics.errors[-1] if scrape_result.metrics.errors else "Provider timeout"
 
         # Route persistence: non-financial workflows → ToolRunOutput; financial → AccountsDB
-        if workflow and workflow.key != "financial_scraper":
-            from ..database import SessionLocal as _SL
-            from ..models.tools import ToolRunOutput
+        if workflow and workflow.persistence_strategy != "financial":
             login_id = logins[0].get("id") if logins else None
             output = ToolRunOutput(
                 tool_key=workflow.key,
@@ -178,7 +207,7 @@ async def run_sync(
                 output_json={workflow.result_key: [r for r in results]},
                 items_count=len(results),
             )
-            with _SL() as session:
+            with SessionLocal() as session:
                 session.add(output)
                 session.commit()
             sync.persisted = results
@@ -189,13 +218,15 @@ async def run_sync(
         logger.exception("Sync failed for %s", provider_key)
         sync.error = str(exc)
 
-    # Post-run analysis (even on failure — partial logs are useful)
-    if sync.logs:
+    # Post-run analysis — only runs for full syncs
+    if sync_type == SyncType.full and sync.logs:
         try:
             prev_metrics = _get_previous_metrics(provider_key)
+            prev = ScrapeMetrics.from_dict(prev_metrics) if prev_metrics else None
             hints = await analyze_run(
                 provider_key, sync.logs, llm_chat,
-                previous_metrics=prev_metrics,
+                previous_metrics=prev,
+                metrics=sync.metrics,
             )
             if hints and on_log:
                 n = sum(len(v) for v in hints.values() if isinstance(v, list))
@@ -203,7 +234,32 @@ async def run_sync(
         except Exception as exc:
             logger.warning("Analyst failed for %s: %s", provider_key, exc)
 
+    if sync_type == SyncType.full and workflow:
+        try:
+            suggestion = await capture_workflow_revision_suggestion(
+                provider_key,
+                workflow=workflow,
+                sync_run_id=sync.run_id,
+                metrics=sync.metrics.to_dict(),
+                results=sync.results,
+                error=sync.error,
+                log_lines=sync.logs,
+                llm_chat_fn=llm_chat,
+            )
+            if suggestion and on_log:
+                on_log(f"[{provider_key}] Analyst drafted workflow revision suggestion for {workflow.key}")
+        except Exception as exc:
+            logger.warning("Workflow analyst failed for %s/%s: %s", provider_key, getattr(workflow, "key", "?"), exc)
+
     finalize_sync_run(sync)
+
+    # Update agent log path if we have it
+    if scrape_result.agent_log_path:
+        with SessionLocal() as session:
+            db_run = session.get(ScraperLoginSyncRun, sync.run_id)
+            db_run.agent_log_path = scrape_result.agent_log_path
+            session.commit()
+
     return sync
 
 

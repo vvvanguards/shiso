@@ -1,3 +1,6 @@
+# Worktrees
+.worktrees/
+
 __pycache__/
 *.pyc
 *.pyo
@@ -18,8 +21,10 @@ shiso/dashboard/frontend/dist/
 .env
 *.pem
 # Encryption keys
+nul
 .fernet.key
 
 # User-specific config
 accounts.json
 scraper.toml
+.srclight/

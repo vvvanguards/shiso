@@ -1,17 +1,28 @@
-"""Prompt loader — reads provider-specific extraction hints from config/prompts/extraction/*.md."""
+"""Prompt template loader and helpers for scraper agents."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-_EXTRACTION_DIR = Path(__file__).parent.parent / "config" / "prompts" / "extraction"
+from jinja2 import Environment, FileSystemLoader
 
-# Provider-specific extraction prompts keyed by provider slug
-EXTRACTION_PROMPTS: dict[str, str] = {}
-for _path in _EXTRACTION_DIR.glob("*.md"):
-    EXTRACTION_PROMPTS[_path.stem] = _path.read_text(encoding="utf-8").strip()
+from .playbooks import load_provider_playbook
+
+_PROMPTS_DIR = Path(__file__).parent.parent / "config" / "prompts"
+
+_env = Environment(
+    loader=FileSystemLoader(str(_PROMPTS_DIR)),
+    keep_trailing_newline=False,
+    trim_blocks=True,
+    lstrip_blocks=True,
+)
+
+
+def render(template_name: str, **kwargs: object) -> str:
+    """Render a prompt template with the given variables."""
+    return _env.get_template(template_name).render(**kwargs).strip()
 
 
 def get_extraction_prompt(provider_key: str, account_type: str | None = None) -> str:
-    """Return provider-specific extraction hints, or empty string for unknown providers."""
-    return EXTRACTION_PROMPTS.get(provider_key, "")
+    """Return the static extraction context for a provider playbook."""
+    return load_provider_playbook(provider_key, account_type).extraction_context()

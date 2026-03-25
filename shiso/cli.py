@@ -5,12 +5,10 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 app = typer.Typer(
@@ -31,6 +29,7 @@ def scrape(
     statements: bool = typer.Option(False, "--statements", help="Download statement PDFs"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="Pause for 2FA/CAPTCHA instead of skipping"),
     account: Optional[str] = typer.Option(None, "--account", "-a", help="Filter to specific account name or mask"),
+    sync_type: str = typer.Option("auto", "--sync-type", "-t", help="Sync type: auto, full, balance, statements"),
     agent_llm: Optional[str] = typer.Option(None, "--agent-llm", help="LLM preset for browser agent"),
     analyst_llm: Optional[str] = typer.Option("openrouter", "--analyst-llm", help="LLM preset for analyst"),
 ) -> None:
@@ -43,12 +42,14 @@ def scrape(
     if analyst_llm:
         os.environ["ANALYST_LLM"] = analyst_llm
 
+    from shiso.scraper.models.sync_type import SyncType
     from shiso.scraper.agent.run import main as run_main
     asyncio.run(run_main(
         targets=targets or None,
         download_statements=statements,
         interactive=interactive,
         account_filter=account,
+        sync_type=SyncType(sync_type),
     ))
 
 
@@ -97,7 +98,7 @@ def providers() -> None:
     table.add_column("Labels")
 
     for key, logins in sorted(accounts.items()):
-        labels = ", ".join(l.get("label", key) for l in logins)
+        labels = ", ".join(login.get("label", key) for login in logins)
         table.add_row(key, str(len(logins)), labels)
 
     console.print(table)
@@ -126,45 +127,88 @@ def auth(
 
 
 # ---------------------------------------------------------------------------
-# shiso start
+# shiso match-test
 # ---------------------------------------------------------------------------
 
 @app.command()
-def start() -> None:
-    """Start API + worker + frontend (dev mode)."""
-    import subprocess
-    console.print("[bold]Starting shiso services...[/bold]")
+def match_test(
+    csv_path: str = typer.Argument(..., help="Path to Chrome passwords CSV"),
+    use_llm: bool = typer.Option(False, "--llm", help="Use LLM for unmatched domains"),
+    limit: int = typer.Option(0, "--limit", "-n", help="Limit LLM calls to N domains (0 = all)"),
+    analyst_llm: Optional[str] = typer.Option(None, "--analyst-llm"),
+) -> None:
+    """Test provider matching on a CSV file.
 
-    procs = []
-    try:
-        procs.append(subprocess.Popen(
-            [sys.executable, "-m", "shiso.dashboard.main"],
-            cwd=str(Path(__file__).parent.parent),
-        ))
-        console.print("  [green]API[/green] started (with reload)")
+    Use --llm to also call LLM for unmatched domains.
+    Use --limit to cap LLM calls (e.g., -n 5 to test just 5 domains).
+    """
+    from dotenv import load_dotenv
+    load_dotenv()
 
-        procs.append(subprocess.Popen(
-            [sys.executable, "-m", "shiso.scraper.worker", "--reload"],
-            cwd=str(Path(__file__).parent.parent),
-        ))
-        console.print("  [green]Worker[/green] started (with reload)")
+    if analyst_llm:
+        os.environ["ANALYST_LLM"] = analyst_llm
 
-        frontend_dir = Path(__file__).parent / "dashboard" / "frontend"
-        if (frontend_dir / "package.json").exists():
-            procs.append(subprocess.Popen(
-                ["npm", "run", "dev"],
-                cwd=str(frontend_dir),
-                shell=True,
-            ))
-            console.print("  [green]Frontend[/green] started")
+    console.print(f"[cyan]ANALYST_LLM = {os.environ.get('ANALYST_LLM', 'not set')}[/cyan]")
 
-        console.print("\n[dim]Press Ctrl+C to stop all services[/dim]")
-        for p in procs:
-            p.wait()
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Stopping services...[/yellow]")
-        for p in procs:
-            p.terminate()
+    from pathlib import Path
+    from shiso.scraper.services.password_import import parse_csv, aggregate_by_domain
+    from shiso.scraper.services.provider_matcher import match_providers_sync, match_providers
+
+    path = Path(csv_path)
+    if not path.exists():
+        console.print(f"[red]File not found: {csv_path}[/red]")
+        raise typer.Exit(1)
+
+    content = path.read_text(encoding="utf-8-sig")
+    rows = parse_csv(content)
+    console.print(f"[cyan]Parsed {len(rows)} rows from CSV[/cyan]")
+
+    aggregated = aggregate_by_domain(rows)
+    console.print(f"[cyan]Aggregated into {len(aggregated)} unique domains[/cyan]")
+
+    if use_llm:
+        console.print(f"[cyan]Matching with LLM (limit={limit or 'all'})...[/cyan]")
+        result = asyncio.run(match_providers(rows, llm_limit=limit if limit > 0 else None))
+    else:
+        console.print(f"[cyan]Local-only matching...[/cyan]")
+        result = match_providers_sync(rows)
+
+    mappings = result.get("mappings", [])
+    summary = result.get("summary", {})
+    console.print(f"\n[green]Match complete![/green]")
+    console.print(f"  Total: {summary.get('total', len(mappings))}")
+    console.print(f"  High confidence (>=90%): {summary.get('high_confidence', 0)}")
+    console.print(f"  Needs review: {summary.get('needs_review', 0)}")
+    console.print(f"  LLM calls: {summary.get('llm_calls', 0)}")
+
+    table = Table(title="Sample Matches (first 15)")
+    table.add_column("Row", style="dim")
+    table.add_column("Domain", style="cyan")
+    table.add_column("Provider", style="green")
+    table.add_column("Type", style="yellow")
+    table.add_column("Conf", style="magenta")
+    table.add_column("Match", style="dim")
+
+    for m in mappings[:15]:
+        table.add_row(
+            str(m.get("row_id", "")),
+            m.get("domain", ""),
+            f"{m.get('provider_key', '')} ({m.get('label', '')})",
+            m.get("account_type", ""),
+            f"{m.get('confidence', 0):.0%}",
+            m.get("match_type", ""),
+        )
+
+    console.print(table)
+
+    unmatched = [m for m in mappings if m.get("is_new_provider")]
+    if unmatched:
+        console.print(f"\n[yellow]Unmatched domains ({len(unmatched)}):[/yellow]")
+        unmatched_domains = sorted(set(m.get("domain", "") for m in unmatched))
+        for d in unmatched_domains[:20]:
+            console.print(f"  [dim]{d}[/dim]")
+        if len(unmatched_domains) > 20:
+            console.print(f"  [dim]... and {len(unmatched_domains) - 20} more[/dim]")
 
 
 # ---------------------------------------------------------------------------

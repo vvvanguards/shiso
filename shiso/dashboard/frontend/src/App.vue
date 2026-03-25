@@ -1,736 +1,401 @@
 <template>
-  <div class="min-h-screen bg-surface-950 text-surface-0 p-6">
+  <div class="min-h-screen bg-shiso-950 text-shiso-200">
     <Toast position="top-right" />
     <ConfirmDialog />
 
-    <div class="mx-auto max-w-7xl space-y-6">
-      <!-- Header -->
-      <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div class="flex items-center gap-2">
-          <img src="/shiso-icon-64.png" alt="Shiso" class="h-8 w-8" />
-          <h1 class="display-font text-3xl font-semibold">Shiso</h1>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <Button @click="loadAll" :loading="loading" label="Refresh" icon="pi pi-refresh" severity="secondary" size="small" outlined />
-          <Button @click="syncEnabledLogins" :loading="syncingAllLogins" :label="syncingAllLogins ? 'Syncing…' : 'Sync All'" icon="pi pi-sync" severity="success" size="small" />
-        </div>
-      </div>
+    <div class="flex h-screen">
+      <nav class="w-56 bg-shiso-900 border-r border-shiso-800 overflow-y-auto flex-shrink-0">
+        <div class="py-2">
+          <button
+            @click="scrollToSection('overview')"
+            :class="[
+              'w-full text-left px-4 py-2 text-sm font-semibold transition-colors border-l-2',
+              activeSection === 'overview'
+                ? 'bg-shiso-700 text-white border-shiso-400'
+                : 'text-shiso-300 hover:bg-shiso-800 hover:text-white border-transparent'
+            ]"
+          >
+            Overview
+          </button>
 
-      <Message v-if="statusMessage" :severity="statusError ? 'error' : 'success'" :closable="true" @close="statusMessage = ''">
-        {{ statusMessage }}
-      </Message>
+          <div class="h-px bg-shiso-800 my-2" />
 
-      <!-- Summary -->
-      <div class="grid gap-4 grid-cols-3">
-        <Card>
-          <template #content>
-            <div class="text-xs uppercase tracking-widest text-surface-400">Assets</div>
-            <div class="mt-1 text-2xl font-semibold text-green-400">{{ money(summary.asset_total) }}</div>
-          </template>
-        </Card>
-        <Card>
-          <template #content>
-            <div class="text-xs uppercase tracking-widest text-surface-400">Liabilities</div>
-            <div class="mt-1 text-2xl font-semibold text-amber-400">{{ money(summary.debt_total) }}</div>
-          </template>
-        </Card>
-        <Card>
-          <template #content>
-            <div class="text-xs uppercase tracking-widest text-surface-400">Net Position</div>
-            <div class="mt-1 text-2xl font-semibold" :class="(summary.net_balance || 0) >= 0 ? 'text-green-400' : 'text-red-400'">
-              {{ signedMoney(summary.net_balance) }}
+          <template v-for="group in sidebarTree" :key="group.name">
+            <div class="px-3 pt-3 pb-1 text-xs font-bold text-shiso-500 uppercase tracking-wider">
+              {{ group.name }}
             </div>
+            <template v-for="section in group.items" :key="section.id">
+              <button
+                v-if="!section.children"
+                @click="scrollToSection(section.id)"
+                :class="[
+                  'w-full text-left px-4 py-1.5 text-sm transition-colors rounded',
+                  activeSection === section.id
+                    ? 'bg-shiso-700 text-white font-medium'
+                    : 'text-shiso-400 hover:bg-shiso-800 hover:text-shiso-100'
+                ]"
+              >
+                {{ section.label }}
+                <span v-if="section.count != null" class="text-xs text-shiso-500 ml-1">({{ section.count }})</span>
+              </button>
+              <template v-else>
+                <button
+                  @click="scrollToSection(section.id)"
+                  :class="[
+                    'w-full text-left px-4 py-1.5 text-sm font-medium transition-colors rounded flex items-center',
+                    activeSection === section.id
+                      ? 'text-white'
+                      : 'text-shiso-300 hover:text-white'
+                  ]"
+                >
+                  <span>{{ section.label }}</span>
+                  <span v-if="section.count != null" class="text-xs text-shiso-500 ml-1">({{ section.count }})</span>
+                </button>
+                <div class="ml-6 mt-1 space-y-0.5">
+                  <button
+                    v-for="child in section.children"
+                    :key="child.id"
+                    @click="scrollToSection(child.id)"
+                    :class="[
+                      'w-full text-left px-3 py-1.5 text-sm transition-colors rounded',
+                      activeSection === child.id
+                        ? 'bg-shiso-600 text-white font-medium'
+                        : 'text-shiso-400 hover:bg-shiso-700 hover:text-shiso-100'
+                    ]"
+                  >
+                    {{ child.label }}
+                    <span v-if="child.count != null" class="text-xs text-shiso-500 ml-1">({{ child.count }})</span>
+                  </button>
+                </div>
+              </template>
+            </template>
           </template>
-        </Card>
-      </div>
-
-      <!-- Problem Logins Alert -->
-      <div v-if="problemLoginsDerived.length > 0" class="bg-red-950/50 border border-red-800 rounded-lg p-4">
-        <div class="flex items-start gap-3">
-          <i class="pi pi-exclamation-triangle text-red-400 text-xl mt-0.5" />
-          <div class="flex-1">
-            <h3 class="text-lg font-semibold text-red-300 mb-2">Attention Required</h3>
-            <p class="text-sm text-red-200 mb-3">
-              {{ problemLoginsDerived.length }} login(s) need authentication. Interactive login required to sync these accounts.
-            </p>
-            <div class="flex flex-wrap gap-2">
-              <div v-for="login in problemLoginsDerived" :key="login.id" class="flex items-center gap-2 bg-surface-900 rounded px-3 py-2">
-                <Tag 
-                  :value="login.last_auth_status === 'needs_2fa' ? '2FA Required' : 'Login Failed'" 
-                  :severity="login.last_auth_status === 'needs_2fa' ? 'warn' : 'danger'" 
-                />
-                <span class="font-medium">{{ login.institution || login.provider_key }}</span>
-                <span class="text-xs text-surface-400">{{ login.username || login.label }}</span>
-                <Button 
-                  @click="startInteractiveAuthForLogin(login)" 
-                  :loading="interactiveAuthLoading[login.id]"
-                  :disabled="interactiveAuthLoading[login.id]"
-                  label="Retry Interactive" 
-                  icon="pi pi-sign-in" 
-                  severity="success" 
-                  size="small"
-                />
-              </div>
-            </div>
-          </div>
         </div>
-      </div>
+      </nav>
 
-      <!-- Global search -->
-      <div class="flex justify-end">
-        <IconField>
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="tableFilters['global'].value" placeholder="Search all accounts..." size="small" />
-        </IconField>
-      </div>
+      <main class="flex-1 overflow-y-auto p-6">
+        <div class="mx-auto max-w-7xl space-y-6">
+          <section id="overview">
+            <DashboardHeader
+              :loading="loading"
+              :syncingAllLogins="syncingAllLogins"
+              @refresh="loadAll"
+              @sync-all="syncEnabledLogins"
+            />
 
-      <!-- Promo APR Tracker -->
-      <Section v-if="promos.length || !loading" header="Promo APR Periods" :count="promos.length" persistKey="promos" class="promo-panel">
-        <template #icons>
-          <Button @click.stop="openPromoDialog()" icon="pi pi-plus" severity="success" size="small" text rounded v-tooltip.top="'Add promo period'" />
-        </template>
-        <DataTable :value="promos" stripedRows size="small" sortField="end_date" :sortOrder="1" v-if="promos.length">
-          <Column header="Account">
-            <template #body="{ data }">
-              <div class="font-medium">{{ data.account_display_name || data.account_institution }}</div>
-              <div v-if="data.account_mask" class="text-xs text-surface-400">••{{ data.account_mask }}</div>
-            </template>
-          </Column>
-          <Column field="promo_type" header="Type" sortable>
-            <template #body="{ data }">
-              <Tag :value="promoTypeLabel(data.promo_type)" :severity="promoTypeSeverity(data.promo_type)" />
-            </template>
-          </Column>
-          <Column field="apr_rate" header="Promo APR" sortable>
-            <template #body="{ data }">
-              <span class="font-semibold text-green-400">{{ data.apr_rate }}%</span>
-            </template>
-          </Column>
-          <Column field="end_date" header="Expires" sortable>
-            <template #body="{ data }">
-              <span :class="promoUrgencyClass(data.days_remaining)">{{ data.end_date }}</span>
-              <div class="text-xs" :class="promoUrgencyClass(data.days_remaining)">
-                {{ data.days_remaining > 0 ? `${data.days_remaining} days left` : 'Expired' }}
-              </div>
-            </template>
-          </Column>
-          <Column field="original_amount" header="Amount">
-            <template #body="{ data }">{{ data.original_amount ? money(data.original_amount) : '—' }}</template>
-          </Column>
-          <Column field="regular_apr" header="Regular APR">
-            <template #body="{ data }">
-              <span v-if="data.regular_apr != null" class="text-amber-400">{{ data.regular_apr }}%</span>
-              <span v-else class="text-surface-500">—</span>
-            </template>
-          </Column>
-          <Column header="" style="width: 6rem">
-            <template #body="{ data }">
-              <div class="flex gap-1">
-                <Button @click="openPromoDialog(data)" icon="pi pi-pencil" severity="secondary" text rounded size="small" v-tooltip.top="'Edit promo'" />
-                <Button @click="confirmDeletePromo(data)" icon="pi pi-trash" severity="danger" text rounded size="small" v-tooltip.top="'Delete promo'" />
-              </div>
-            </template>
-          </Column>
-          <template #empty>
-            <div class="py-6 text-center text-surface-400">No promo periods tracked.</div>
-          </template>
-        </DataTable>
-        <div v-else class="py-4 text-center text-surface-400">
-          No promo periods tracked. <Button @click="openPromoDialog()" label="Add one" severity="secondary" size="small" text />
+            <Message v-if="statusMessage" :severity="statusError ? 'error' : 'success'" :closable="true" @close="statusMessage = ''">
+              {{ statusMessage }}
+            </Message>
+
+            <SummaryCards :summary="summary" />
+
+            <ProblemLoginsAlert
+              :problemLogins="problemLoginsDerived"
+              :authLoading="interactiveAuthLoading"
+              @resolve="startInteractiveAuthForLogin"
+            />
+
+            <AgentHelpBanner
+              :sessions="activeSessions"
+              @respond="openAgentDialog"
+            />
+
+            <GlobalSearch v-model="tableFilters['global'].value" />
+          </section>
+
+          <section id="liabilities">
+            <LiabilitiesSection
+              :rows="liabilityRows"
+              v-model:filters="tableFilters"
+              :logins="logins"
+              @sync="handleSnapshotSync"
+              @edit="handleSnapshotEdit"
+            />
+          </section>
+
+          <section id="bills">
+            <BillsSection
+              :rows="billRows"
+              v-model:filters="tableFilters"
+              :logins="logins"
+              @sync="handleSnapshotSync"
+              @edit="handleSnapshotEdit"
+              @toggle-paid="handleTogglePaid"
+            />
+          </section>
+
+          <section id="promos">
+            <PromosPanel :promos="promos" :loading="loading" @add="openPromoDialog()" @edit="openPromoDialog($event)" @delete="confirmDeletePromo($event, loadAll)" />
+          </section>
+
+          <section id="assets">
+            <AssetsSection
+              :rows="assetRows"
+              v-model:filters="tableFilters"
+              :logins="logins"
+              @sync="handleSnapshotSync"
+              @edit="handleSnapshotEdit"
+            />
+            <RewardsSection
+              :rows="rewards"
+              @add="openRewardsDialog()"
+              @edit="openRewardsDialog($event)"
+            />
+          </section>
+
+          <section id="zero-balance">
+            <ZeroBalanceSection
+              :rows="zeroBalanceRows"
+              v-model:filters="tableFilters"
+              :logins="logins"
+              @sync="handleSnapshotSync"
+              @edit="handleSnapshotEdit"
+            />
+          </section>
+
+          <section id="logins">
+            <LoginsPanel
+              :logins="logins"
+              :loading="loginsLoading"
+              :syncingAll="syncingAllLogins"
+              :enabledCount="enabledLoginCount"
+              :showDeleted="showDeleted"
+              @add="openLoginDialog()"
+              @syncAll="syncEnabledLogins"
+              @sync="syncLoginRow"
+              @edit="openLoginDialog"
+              @toggle="toggleEnabled"
+              @delete="confirmDeleteLogin"
+              @toggleShowDeleted="showDeleted = !showDeleted; loadLogins()"
+            />
+          </section>
+
+          <section id="import">
+            <ImportPanel
+              :importSession="importSession"
+              :importing="importing"
+              @upload="handleFileUpload"
+              @import="(ids) => runImportFromSelection(ids, loadLogins)"
+              @cancel="cancelImport"
+            />
+          </section>
         </div>
-      </Section>
-
-      <!-- Rewards Tracker -->
-      <Section v-if="rewards.length || !loading" header="Rewards" :count="rewards.length" persistKey="rewards" class="rewards-panel">
-        <template #icons>
-          <Button @click.stop="openRewardsDialog()" icon="pi pi-plus" severity="success" size="small" text rounded v-tooltip.top="'Add rewards program'" />
-        </template>
-        <DataTable :value="rewards" stripedRows size="small" sortField="program_type" :sortOrder="1" v-if="rewards.length">
-          <Column header="Account">
-            <template #body="{ data }">
-              <div class="font-medium">{{ data.account_display_name || data.institution }}</div>
-              <div v-if="data.account_mask" class="text-xs text-surface-400">••{{ data.account_mask }}</div>
-            </template>
-          </Column>
-          <Column field="program_name" header="Program" sortable>
-            <template #body="{ data }">
-              <div class="font-medium">{{ data.program_name }}</div>
-              <div class="text-xs text-surface-400">{{ data.program_type }}</div>
-            </template>
-          </Column>
-          <Column field="balance" header="Balance" sortable>
-            <template #body="{ data }">
-              <span class="font-semibold">{{ formatRewardsBalance(data.balance, data.unit_name, data.program_type) }}</span>
-              <div v-if="data.cents_per_unit" class="text-xs text-surface-400">≈ ${{ formatMoney(data.monetary_value || 0) }}</div>
-            </template>
-          </Column>
-          <Column field="monetary_value" header="Value" sortable>
-            <template #body="{ data }">
-              <span v-if="data.monetary_value != null" class="text-green-400 font-semibold">{{ money(data.monetary_value) }}</span>
-              <span v-else class="text-surface-500">—</span>
-            </template>
-          </Column>
-          <Column header="" style="width: 4rem">
-            <template #body="{ data }">
-              <Button @click="openRewardsDialog(data)" icon="pi pi-pencil" severity="secondary" text rounded size="small" v-tooltip.top="'Edit program'" />
-            </template>
-          </Column>
-          <template #empty>
-            <div class="py-6 text-center text-surface-400">No rewards programs tracked.</div>
-          </template>
-        </DataTable>
-        <div v-else class="py-4 text-center text-surface-400">
-          No rewards programs tracked. <Button @click="openRewardsDialog()" label="Add one" severity="secondary" size="small" text />
-        </div>
-      </Section>
-
-      <!-- Bills: accounts with upcoming due dates -->
-      <Section header="Bills" :count="billRows.length" persistKey="bills">
-        <AccountTable :rows="billRows" v-model:filters="tableFilters" sortField="due_date" :sortOrder="1" emptyMessage="No bills with due dates found.">
-          <Column field="due_date" header="Due" sortable>
-            <template #body="{ data }">
-              <span :class="isDueSoon(data.due_date) ? 'text-red-400 font-semibold' : ''">{{ data.due_date || '—' }}</span>
-            </template>
-          </Column>
-          <Column field="minimum_payment" header="Min Payment" sortable>
-            <template #body="{ data }">{{ data.minimum_payment ? money(data.minimum_payment) : '—' }}</template>
-          </Column>
-          <Column field="interest_rate" header="APR" sortable>
-            <template #body="{ data }">
-              <span v-if="data.interest_rate != null">{{ data.interest_rate }}%</span>
-              <span v-else class="text-surface-500">—</span>
-            </template>
-          </Column>
-        </AccountTable>
-      </Section>
-
-      <!-- Assets -->
-      <Section header="Assets" :count="assetRows.length" persistKey="assets">
-        <AccountTable :rows="assetRows" v-model:filters="tableFilters" balanceColor="text-green-400" emptyMessage="No asset accounts found." />
-      </Section>
-
-      <!-- Liabilities -->
-      <Section header="Liabilities" :count="liabilityRows.length" persistKey="liabilities">
-        <AccountTable :rows="liabilityRows" v-model:filters="tableFilters" emptyMessage="No liability accounts found.">
-          <Column field="due_date" header="Due" sortable>
-            <template #body="{ data }">{{ data.due_date || '—' }}</template>
-          </Column>
-          <Column field="minimum_payment" header="Min Payment" sortable>
-            <template #body="{ data }">{{ data.minimum_payment ? money(data.minimum_payment) : '—' }}</template>
-          </Column>
-          <Column field="interest_rate" header="APR" sortable>
-            <template #body="{ data }">
-              <span v-if="data.interest_rate != null">{{ data.interest_rate }}%</span>
-              <span v-else class="text-surface-500">—</span>
-            </template>
-          </Column>
-        </AccountTable>
-      </Section>
-
-      <!-- Tools -->
-      <Section header="Tools" :collapsed="true" persistKey="tools">
-        <div v-if="!tools.length" class="py-4 text-center text-surface-400">No tools registered.</div>
-        <div v-else class="space-y-4">
-          <DataTable :value="tools" stripedRows size="small">
-            <Column field="display_name" header="Tool" sortable>
-              <template #body="{ data }">
-                <div class="font-medium">{{ data.display_name }}</div>
-                <div class="text-xs text-surface-400">{{ data.tool_key }}</div>
-              </template>
-            </Column>
-            <Column field="description" header="Description" />
-            <Column header="" style="width: 6rem">
-              <template #body="{ data }">
-                <Button @click="loadToolRuns(data.tool_key)" icon="pi pi-list" severity="secondary" text rounded size="small" v-tooltip.top="'View runs'" />
-              </template>
-            </Column>
-          </DataTable>
-
-          <div v-if="selectedToolKey && toolRuns.length" class="mt-4">
-            <h3 class="text-sm uppercase tracking-widest text-surface-400 mb-2">Recent Runs: {{ selectedToolKey }}</h3>
-            <DataTable :value="toolRuns" stripedRows size="small" :rows="10" :paginator="toolRuns.length > 10">
-              <Column field="created_at" header="Date" sortable>
-                <template #body="{ data }">{{ relativeTime(data.created_at) }}</template>
-              </Column>
-              <Column field="provider_key" header="Provider" sortable />
-              <Column field="items_count" header="Items" sortable />
-              <Column header="Output">
-                <template #body="{ data }">
-                  <span class="text-xs text-surface-400 truncate block max-w-[300px]">{{ JSON.stringify(data.output_json).substring(0, 100) }}...</span>
-                </template>
-              </Column>
-            </DataTable>
-          </div>
-        </div>
-      </Section>
-
-      <!-- Admin: Manage Logins -->
-      <Section header="Manage Logins" :collapsed="true" persistKey="logins">
-        <template #icons>
-          <Button @click.stop="openLoginDialog()" icon="pi pi-plus" severity="success" size="small" text rounded />
-          <Button
-            @click.stop="syncEnabledLogins"
-            :loading="syncingAllLogins"
-            :disabled="!enabledLoginCount"
-            icon="pi pi-sync"
-            severity="secondary"
-            size="small"
-            text
-            rounded
-            v-tooltip.top="'Sync all enabled'"
-          />
-        </template>
-
-        <DataTable :value="logins" stripedRows size="small" :loading="loginsLoading" sortField="provider_key" :sortOrder="1" :rowClass="(data) => !data.enabled ? 'opacity-50' : ''">
-          <Column header="Provider" sortField="provider_key" sortable>
-            <template #body="{ data }">
-              <div class="font-medium">{{ data.institution || data.provider_key }}</div>
-              <div class="text-xs text-surface-400">{{ data.label }}</div>
-            </template>
-          </Column>
-          <Column field="account_type" header="Type" sortable>
-            <template #body="{ data }">
-              <Tag :value="data.account_type" :severity="typeSeverity(data.account_type)" />
-            </template>
-          </Column>
-          <Column field="username" header="Username">
-            <template #body="{ data }">
-              <span class="text-sm">{{ data.username || '—' }}</span>
-            </template>
-          </Column>
-          <Column header="Synced" sortField="last_sync_finished_at" sortable>
-            <template #body="{ data }">
-              <div class="flex items-center gap-1.5" v-tooltip.top="data.last_sync_error">
-                <i :class="syncIcon(data)" />
-                <span class="text-sm text-surface-300">{{ syncTimestamp(data) }}</span>
-              </div>
-            </template>
-          </Column>
-          <Column header="" style="width: 8rem">
-            <template #body="{ data }">
-              <div class="flex gap-1">
-                <Button @click="syncLoginRow(data)" icon="pi pi-sync" severity="success" text rounded size="small" :disabled="!data.enabled" v-tooltip.top="'Sync now'" />
-                <Button @click="openLoginDialog(data)" icon="pi pi-pencil" severity="secondary" text rounded size="small" v-tooltip.top="'Edit'" />
-                <Button @click="toggleEnabled(data)" :icon="data.enabled ? 'pi pi-pause' : 'pi pi-play'" severity="info" text rounded size="small" v-tooltip.top="data.enabled ? 'Pause' : 'Resume'" />
-                <Button @click="confirmDeleteLogin(data)" icon="pi pi-trash" severity="danger" text rounded size="small" v-tooltip.top="'Delete'" />
-              </div>
-            </template>
-          </Column>
-          <template #empty>
-            <div class="py-6 text-center text-surface-400">No logins configured.</div>
-          </template>
-        </DataTable>
-      </Section>
-
-      <!-- Admin: Import Passwords -->
-      <Section header="Import Passwords" :collapsed="true" persistKey="import" class="mb-12">
-        <div v-if="!importPreviewData" class="flex items-center gap-4">
-          <FileUpload mode="basic" accept=".csv" :auto="true" chooseLabel="Choose CSV File" customUpload @uploader="handleFileUpload" />
-          <span class="text-sm text-surface-400">Export from chrome://password-manager/settings</span>
-        </div>
-
-        <div v-else>
-          <Toolbar class="mb-4">
-            <template #start>
-              <div class="flex items-center gap-3 text-sm">
-                <Tag :value="`${importPreviewData.matched.length} matched`" severity="success" />
-                <Tag v-if="importDuplicateCount" :value="`${importDuplicateCount} existing`" severity="warn" />
-                <Tag :value="`${importPreviewData.unmatched.length} unmatched`" severity="secondary" />
-                <Tag :value="`${importSelectedRows.length} selected`" severity="info" />
-              </div>
-            </template>
-            <template #end>
-              <div class="flex gap-2">
-                <Button @click="showUnmatched = !showUnmatched" :label="showUnmatched ? 'Hide Unmatched' : 'Show Unmatched'" severity="secondary" size="small" outlined />
-                <Button @click="clearImport" label="Clear" severity="secondary" size="small" outlined />
-                <Button @click="runImport" :loading="importing" :label="importButtonLabel" :disabled="!importSelectedRows.length" severity="success" size="small" />
-              </div>
-            </template>
-          </Toolbar>
-
-          <DataTable :value="importPreviewData.matched" v-model:selection="importSelectedRows" dataKey="row_id" scrollable scrollHeight="400px" size="small">
-            <Column selectionMode="multiple" headerStyle="width: 3rem" />
-            <Column header="Provider">
-              <template #body="{ data }">
-                <div class="font-medium">{{ data.provider_label }}</div>
-                <div class="text-xs text-surface-400">{{ data.provider_key }}</div>
-              </template>
-            </Column>
-            <Column field="account_type" header="Type">
-              <template #body="{ data }">
-                <Tag :value="data.account_type" severity="secondary" />
-              </template>
-            </Column>
-            <Column field="username" header="Username" />
-            <Column header="Password">
-              <template #body="{ data }">{{ data.has_password ? '••••••••' : '—' }}</template>
-            </Column>
-            <Column header="Status" style="width: 6rem">
-              <template #body="{ data }">
-                <Tag v-if="data.is_duplicate" value="exists" severity="warn" />
-                <Tag v-else value="new" severity="success" />
-              </template>
-            </Column>
-          </DataTable>
-
-          <div v-if="showUnmatched" class="mt-4">
-            <h3 class="text-sm uppercase tracking-widest text-surface-400 mb-2">Unmatched ({{ importPreviewData.unmatched.length }})</h3>
-            <DataTable :value="importPreviewData.unmatched" scrollable scrollHeight="300px" size="small">
-              <Column field="name" header="Site" />
-              <Column field="username" header="Username">
-                <template #body="{ data }">{{ data.username || '—' }}</template>
-              </Column>
-              <Column field="url" header="URL">
-                <template #body="{ data }">
-                  <span class="text-xs text-surface-400 truncate block max-w-[300px]">{{ data.url }}</span>
-                </template>
-              </Column>
-            </DataTable>
-          </div>
-        </div>
-      </Section>
+      </main>
     </div>
 
-    <!-- Promo Dialog -->
-    <Dialog v-model:visible="promoDialogVisible" :header="promoDialogEdit ? 'Edit Promo Period' : 'Add Promo Period'" modal :style="{ width: '480px' }">
-      <div class="flex flex-col gap-4 pt-2">
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Account</label>
-          <Select v-model="promoForm.financial_account_id" :options="accountsList" optionLabel="label" optionValue="id" placeholder="Select account" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Promo Type</label>
-          <Select v-model="promoForm.promo_type" :options="promoTypes" optionLabel="label" optionValue="value" fluid />
-        </div>
-        <div class="grid grid-cols-2 gap-4">
-          <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium">Promo APR %</label>
-            <InputText v-model="promoForm.apr_rate" type="number" step="0.01" fluid />
-          </div>
-          <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium">Regular APR %</label>
-            <InputText v-model="promoForm.regular_apr" type="number" step="0.01" placeholder="Optional" fluid />
-          </div>
-        </div>
-        <div class="grid grid-cols-2 gap-4">
-          <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium">Start Date</label>
-            <InputText v-model="promoForm.start_date" type="date" fluid />
-          </div>
-          <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium">End Date</label>
-            <InputText v-model="promoForm.end_date" type="date" fluid />
-          </div>
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Original Amount</label>
-          <InputText v-model="promoForm.original_amount" type="number" step="0.01" placeholder="Optional" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Description</label>
-          <InputText v-model="promoForm.description" placeholder="Optional note" fluid />
-        </div>
-      </div>
-      <template #footer>
-        <Button @click="promoDialogVisible = false" label="Cancel" severity="secondary" text />
-        <Button @click="savePromo" :label="promoDialogEdit ? 'Update' : 'Create'" severity="success" />
-      </template>
-    </Dialog>
+    <PromoDialog
+      v-model:visible="promoDialogVisible"
+      v-model:form="promoForm"
+      :edit="promoDialogEdit"
+      :accounts="accountsList"
+      :promoTypes="promoTypes"
+      @save="() => savePromo(loadAll)"
+    />
 
-    <!-- Login Dialog -->
-    <Dialog v-model:visible="loginDialogVisible" :header="loginDialogEdit ? 'Edit Login' : 'Add Login'" modal :style="{ width: '480px' }">
-      <div class="flex flex-col gap-4 pt-2">
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Provider Key</label>
-          <AutoComplete v-model="loginForm.provider_key" :suggestions="filteredProviders" @complete="searchProviders" placeholder="e.g. amex" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Institution</label>
-          <InputText v-model="loginForm.institution" placeholder="e.g. Bank of America" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Label</label>
-          <InputText v-model="loginForm.label" placeholder="Display label" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Account Type</label>
-          <Select v-model="loginForm.account_type" :options="accountTypes" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Tool</label>
-          <Select v-model="loginForm.tool_key" :options="toolOptions" optionLabel="label" optionValue="value" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Username</label>
-          <InputText v-model="loginForm.username" placeholder="Username" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Password</label>
-          <Password v-model="loginForm.password" :placeholder="loginDialogEdit ? '(unchanged)' : 'Password'" toggleMask :feedback="false" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Login URL</label>
-          <InputText v-model="loginForm.login_url" placeholder="https://..." fluid />
-        </div>
-        <div class="flex items-center gap-2">
-          <ToggleSwitch v-model="loginForm.enabled" />
-          <label class="text-sm">Enabled</label>
-        </div>
-      </div>
-      <template #footer>
-        <Button @click="loginDialogVisible = false" label="Cancel" severity="secondary" text />
-        <Button @click="saveLogin" :label="loginDialogEdit ? 'Update' : 'Create'" severity="success" />
-      </template>
-    </Dialog>
+    <InteractiveAuthDialog
+      v-model:visible="interactiveAuthDialogVisible"
+      v-model:response="interactiveAuthResponse"
+      :login="interactiveAuthDialogLogin"
+      :session="interactiveAuthSession"
+      :responding="interactiveAuthResponding"
+      @hide="closeInteractiveAuthDialog"
+      @submit="submitInteractiveAuthResponse"
+    />
 
-    <!-- Rewards Dialog -->
-    <Dialog v-model:visible="rewardsDialogVisible" :header="rewardsDialogEdit ? 'Edit Rewards Program' : 'Add Rewards Program'" modal :style="{ width: '480px' }">
-      <div class="flex flex-col gap-4 pt-2">
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Account</label>
-          <Select v-model="rewardsForm.financial_account_id" :options="accountsList" optionLabel="label" optionValue="id" placeholder="Select account" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Program Name</label>
-          <InputText v-model="rewardsForm.program_name" placeholder="e.g. Chase Ultimate Rewards" fluid />
-        </div>
-        <div class="grid grid-cols-2 gap-4">
-          <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium">Type</label>
-            <Select v-model="rewardsForm.program_type" :options="rewardsTypes" optionLabel="label" optionValue="value" fluid />
-          </div>
-          <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium">Unit Name</label>
-            <InputText v-model="rewardsForm.unit_name" placeholder="points, miles, etc." fluid />
-          </div>
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-medium">Cents per Unit (for valuation)</label>
-          <InputText v-model="rewardsForm.cents_per_unit" type="number" step="0.01" placeholder="e.g. 1.5 for 1.5¢/point" fluid />
-        </div>
-      </div>
-      <template #footer>
-        <Button @click="rewardsDialogVisible = false" label="Cancel" severity="secondary" text />
-        <Button @click="saveRewardsProgram" :label="rewardsDialogEdit ? 'Update' : 'Create'" severity="success" />
-      </template>
-    </Dialog>
+    <AgentHelpDialog
+      v-model:visible="agentDialogVisible"
+      v-model:response="agentResponse"
+      :session="agentDialogSession"
+      :responding="agentResponding"
+      @hide="closeAgentDialog"
+      @submit="submitAgentResponse"
+    />
+
+    <LoginDialog
+      v-model:visible="loginDialogVisible"
+      v-model:form="loginForm"
+      :edit="loginDialogEdit"
+      :providers="providers"
+      :accountTypes="accountTypes"
+      :toolOptions="toolOptions"
+      @save="saveLogin"
+    />
+
+    <RewardsDialog
+      v-model:visible="rewardsDialogVisible"
+      v-model:form="rewardsForm"
+      :edit="rewardsDialogEdit"
+      :accounts="accountsList"
+      :logins="logins"
+      :rewardTypes="rewardsTypes"
+      @save="() => saveRewardsProgram(loadAll)"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, reactive } from 'vue'
-import { useToast } from 'primevue/usetoast'
-import { useConfirm } from 'primevue/useconfirm'
-import { FilterMatchMode } from '@primevue/core/api'
-import {
-  fetchDashboard,
-  fetchLogins,
-  createLogin,
-  updateLogin,
-  deleteLogin as apiDeleteLogin,
-  fetchProviders,
-  importPreview,
-  importLogins,
-  syncLogin as apiSyncLogin,
-  syncLogins as apiSyncLogins,
-  fetchPromos,
-  createPromo,
-  updatePromo as apiUpdatePromo,
-  deletePromo as apiDeletePromo,
-  fetchAccountsList,
-  fetchAccountTypes,
-  fetchTools,
-  fetchToolRuns,
-  fetchProblemLogins,
-  startInteractiveAuth,
-  fetchRewardsPrograms,
-  createRewardsProgram,
-  updateRewardsProgram,
-  fetchRewardsSummary,
-} from './api.js'
-import { money, signedMoney, relativeTime, typeSeverity, isDueSoon } from './helpers.js'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
-import Section from './components/Section.vue'
-import AccountTable from './components/AccountTable.vue'
-
-import AutoComplete from 'primevue/autocomplete'
-import Button from 'primevue/button'
-import Card from 'primevue/card'
-import Column from 'primevue/column'
-import ConfirmDialog from 'primevue/confirmdialog'
-import DataTable from 'primevue/datatable'
-import Dialog from 'primevue/dialog'
-import FileUpload from 'primevue/fileupload'
-import InputText from 'primevue/inputtext'
-import IconField from 'primevue/iconfield'
-import InputIcon from 'primevue/inputicon'
-import Message from 'primevue/message'
-import Password from 'primevue/password'
-import Select from 'primevue/select'
-import Tag from 'primevue/tag'
 import Toast from 'primevue/toast'
-import ToggleSwitch from 'primevue/toggleswitch'
-import Toolbar from 'primevue/toolbar'
+import ConfirmDialog from 'primevue/confirmdialog'
+import Message from 'primevue/message'
 
-const toast = useToast()
-const confirm = useConfirm()
+import DashboardHeader from './components/DashboardHeader.vue'
+import SummaryCards from './components/SummaryCards.vue'
+import ProblemLoginsAlert from './components/ProblemLoginsAlert.vue'
+import GlobalSearch from './components/GlobalSearch.vue'
+import BillsSection from './components/BillsSection.vue'
+import AssetsSection from './components/AssetsSection.vue'
+import LiabilitiesSection from './components/LiabilitiesSection.vue'
+import ZeroBalanceSection from './components/ZeroBalanceSection.vue'
+import PromosPanel from './components/PromosPanel.vue'
+import RewardsSection from './components/RewardsSection.vue'
+import RewardsPanel from './components/RewardsPanel.vue'
+import LoginsPanel from './components/LoginsPanel.vue'
+import ImportPanel from './components/ImportPanel.vue'
+import ToolsPanel from './components/ToolsPanel.vue'
+import PromoDialog from './components/PromoDialog.vue'
+import RewardsDialog from './components/RewardsDialog.vue'
+import InteractiveAuthDialog from './components/InteractiveAuthDialog.vue'
+import AgentHelpDialog from './components/AgentHelpDialog.vue'
+import AgentHelpBanner from './components/AgentHelpBanner.vue'
+import LoginDialog from './components/LoginDialog.vue'
 
-const snapshots = ref([])
-const summary = ref({})
-const loading = ref(false)
-const statusMessage = ref('')
-const statusError = ref(false)
-const tableFilters = ref({
-  global: { value: null, matchMode: FilterMatchMode.CONTAINS },
-})
+import { useDashboard, provideActiveSection } from './composables/useDashboard.js'
+import { useLogins } from './composables/useLogins.js'
+import { useInteractiveAuth } from './composables/useInteractiveAuth.js'
+import { useAgentSessions } from './composables/useAgentSessions.js'
+import { usePromos } from './composables/usePromos.js'
+import { useRewards } from './composables/useRewards.js'
+import { useImport } from './composables/useImport.js'
 
-const logins = ref([])
-const loginsLoading = ref(false)
-const syncingAllLogins = ref(false)
-const providers = ref([])
-const filteredProviders = ref([])
-const loginDialogVisible = ref(false)
-const loginDialogEdit = ref(false)
-const loginEditId = ref(null)
-const loginForm = ref(defaultLoginForm())
-const accountTypes = ref([])
+const activeSection = provideActiveSection('overview')
 
-// Problem logins (needs_2fa, login_failed)
-const problemLogins = ref([])
-const interactiveAuthLoading = reactive({})
+const {
+  summary, loading, statusMessage, statusError, tableFilters,
+  billRows, assetRows, liabilityRows, zeroBalanceRows,
+  loadDashboard, toggleSnapshotPaidStatus,
+} = useDashboard()
 
-// Computed: derive from logins if not fetched separately
-const problemLoginsDerived = computed(() => {
-  if (problemLogins.value.length > 0) return problemLogins.value
-  return logins.value.filter(l => l.last_auth_status === 'needs_2fa' || l.last_auth_status === 'login_failed')
-})
+const {
+  logins, loginsLoading, syncingAllLogins, showDeleted, providers, accountTypes,
+  loginDialogVisible, loginDialogEdit, loginForm, toolOptions,
+  problemLoginsDerived, enabledLoginCount,
+  loadLogins, loadProviders, syncLoginRow, syncEnabledLogins,
+  openLoginDialog, saveLogin, confirmDeleteLogin, toggleEnabled,
+} = useLogins()
 
-const promos = ref([])
-const accountsList = ref([])
-const tools = ref([])
-const toolRuns = ref([])
-const selectedToolKey = ref(null)
-const promoDialogVisible = ref(false)
-const promoDialogEdit = ref(false)
-const promoEditId = ref(null)
-const promoForm = ref(defaultPromoForm())
-const promoTypes = [
-  { label: 'Purchase', value: 'purchase' },
-  { label: 'Balance Transfer', value: 'balance_transfer' },
-  { label: 'General', value: 'general' },
-]
+const {
+  interactiveAuthLoading, interactiveAuthDialogVisible,
+  interactiveAuthDialogLogin, interactiveAuthSession,
+  interactiveAuthResponse, interactiveAuthResponding,
+  stopInteractiveAuthPolling, closeInteractiveAuthDialog,
+  startInteractiveAuthForLogin, submitInteractiveAuthResponse,
+} = useInteractiveAuth({ reloadLogins: loadLogins })
 
-const rewardsDialogVisible = ref(false)
-const rewardsDialogEdit = ref(false)
-const rewardsEditId = ref(null)
-const rewardsForm = ref(defaultRewardsForm())
-const rewardsTypes = [
-  { label: 'Points', value: 'points' },
-  { label: 'Miles', value: 'miles' },
-  { label: 'Cashback', value: 'cashback' },
-  { label: 'Other', value: 'other' },
-]
-const rewards = ref([])
+const {
+  activeSessions, agentDialogVisible, agentDialogSession,
+  agentResponse, agentResponding,
+  loadActiveSessions, openAgentDialog, closeAgentDialog,
+  submitAgentResponse, stopPolling: stopAgentPolling,
+} = useAgentSessions()
 
-function defaultRewardsForm() {
-  return { financial_account_id: null, program_name: '', program_type: 'points', unit_name: '', cents_per_unit: null }
+const {
+  promos, accountsList, promoDialogVisible, promoDialogEdit, promoForm, promoTypes,
+  loadPromos, openPromoDialog, savePromo, confirmDeletePromo,
+} = usePromos()
+
+const {
+  rewards, rewardsDialogVisible, rewardsDialogEdit, rewardsForm, rewardsTypes,
+  loadRewards, openRewardsDialog, saveRewardsProgram,
+} = useRewards()
+
+const {
+  importSession, importing,
+  handleFileUpload, runImportFromSelection, cancelImport,
+} = useImport()
+
+const sidebarTree = computed(() => [
+  {
+    name: 'Finances',
+    items: [
+      { id: 'liabilities', label: 'Liabilities', count: liabilityRows.value.length, children: [
+        { id: 'promos', label: 'Promo APRs', count: promos.value.length },
+        { id: 'bills', label: 'Bills', count: billRows.value.length },
+      ]},
+      { id: 'assets', label: 'Assets', count: assetRows.value.length, children: [
+        { id: 'rewards', label: 'Rewards', count: rewards.value.length },
+      ]},
+    ]
+  },
+  {
+    name: 'Status',
+    items: [
+      { id: 'zero-balance', label: 'Zero Balance', count: zeroBalanceRows.value.length },
+    ]
+  },
+  {
+    name: 'Accounts',
+    items: [
+      { id: 'logins', label: 'Logins', count: logins.value.length },
+      { id: 'import', label: 'Import' },
+    ]
+  },
+])
+
+function scrollToSection(id) {
+  activeSection.value = id
 }
 
-function formatRewardsBalance(balance, unitName, programType) {
-  if (programType === 'cashback') {
-    return `$${(balance || 0).toFixed(2)}`
+watch(activeSection, (sectionId) => {
+  if (!sectionId) return
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const el = document.getElementById(sectionId)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    })
+  })
+})
+
+function handleSnapshotSync(snapshot) {
+  const login = logins.value.find(l => l.id === snapshot.scraper_login_id)
+  if (!login) {
+    toast.add({ severity: 'warn', summary: 'No Linked Login', detail: 'This account is not linked to a scraper login yet.', life: 4000 })
+    return
   }
-  const unit = unitName || (programType === 'miles' ? 'miles' : 'points')
-  return `${(balance || 0).toLocaleString()} ${unit}`
+  const accountFilter = snapshot.address || snapshot.account_mask || snapshot.display_name || null
+  const accountLabel = snapshot.display_name || snapshot.account_mask || 'Account'
+  syncLoginRow(login, accountFilter ? { account_filter: accountFilter } : null, `${accountLabel} queued for sync`)
 }
 
-function formatMoney(val) {
-  return (val || 0).toFixed(2)
-}
-
-function defaultPromoForm() {
-  return { financial_account_id: null, promo_type: 'purchase', apr_rate: 0, regular_apr: null, start_date: '', end_date: '', original_amount: null, description: '' }
-}
-
-const importFile = ref(null)
-const importPreviewData = ref(null)
-const importSelectedRows = ref([])
-const importing = ref(false)
-const showUnmatched = ref(false)
-
-const importDuplicateCount = computed(() => {
-  if (!importPreviewData.value) return 0
-  return importPreviewData.value.matched.filter(r => r.is_duplicate).length
-})
-
-const importButtonLabel = computed(() => {
-  const sel = importSelectedRows.value
-  if (!sel.length) return 'Import 0 Selected'
-  const newCount = sel.filter(r => !r.is_duplicate).length
-  const dupeCount = sel.filter(r => r.is_duplicate).length
-  const parts = []
-  if (newCount) parts.push(`${newCount} new`)
-  if (dupeCount) parts.push(`${dupeCount} update`)
-  return `Import (${parts.join(', ')})`
-})
-
-function defaultLoginForm() {
-  return { provider_key: '', institution: '', label: '', username: '', password: '', login_url: '', account_type: 'Credit Card', tool_key: 'financial_scraper', enabled: true, sort_order: 0 }
-}
-
-// Filtered views of snapshots
-const billRows = computed(() =>
-  snapshots.value.filter(s => s.due_date || s.minimum_payment).sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''))
-)
-
-const assetRows = computed(() =>
-  snapshots.value.filter(s => s.balance_type === 'asset')
-)
-
-const liabilityRows = computed(() =>
-  snapshots.value.filter(s => s.balance_type === 'liability')
-)
-
-const enabledLoginCount = computed(() => logins.value.filter(login => login.enabled).length)
-
-const toolOptions = computed(() =>
-  tools.value.map(t => ({ label: t.display_name, value: t.tool_key }))
-)
-
-async function loadToolRuns(toolKey) {
-  selectedToolKey.value = toolKey
-  try {
-    toolRuns.value = await fetchToolRuns(toolKey)
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
+function handleSnapshotEdit(snapshot) {
+  const login = logins.value.find(l => l.id === snapshot.scraper_login_id)
+  if (!login) {
+    toast.add({ severity: 'warn', summary: 'No Linked Login', detail: 'This account is not linked to a scraper login yet.', life: 4000 })
+    return
   }
+  openLoginDialog(login)
 }
 
-// Data loading — single function for mount + refresh
+function handleTogglePaid(snapshotId, newIsPaid) {
+  toggleSnapshotPaidStatus(snapshotId, newIsPaid)
+}
+
 async function loadAll() {
   loading.value = true
   statusMessage.value = ''
   statusError.value = false
   try {
-    const [dashboard, l, p, types, t, promosData, accounts, rewardsData] = await Promise.all([
-      fetchDashboard(),
-      fetchLogins(),
-      fetchProviders(),
-      fetchAccountTypes(),
-      fetchTools(),
-      fetchPromos(true).catch(() => []),
-      fetchAccountsList().catch(() => []),
-      fetchRewardsSummary().catch(() => ({ programs: [] })),
+    await Promise.all([
+      loadDashboard(),
+      loadLogins(),
+      loadProviders(),
+      loadPromos(),
+      loadRewards(),
+      loadActiveSessions(),
     ])
-    snapshots.value = dashboard.snapshots
-    summary.value = dashboard.summary
-    logins.value = l
-    providers.value = p
-    accountTypes.value = types.map(t => t.name)
-    tools.value = t
-    promos.value = promosData
-    accountsList.value = accounts.map(a => ({ id: a.id, label: `${a.institution} — ${a.display_name || a.account_mask || 'Unnamed'}` }))
-    rewards.value = rewardsData.programs || []
   } catch (err) {
     statusMessage.value = err.message
     statusError.value = true
@@ -739,276 +404,16 @@ async function loadAll() {
   }
 }
 
-// Re-fetch just logins (after mutations like delete, import, sync)
-async function loadLogins() {
-  try {
-    logins.value = await fetchLogins()
-    try {
-      problemLogins.value = await fetchProblemLogins()
-    } catch {
-      problemLogins.value = []
-    }
-  } catch (err) { toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 }) }
-}
+let agentSessionsPollTimer = null
 
-async function syncLoginRow(login) {
-  try {
-    const result = await apiSyncLogin(login.id)
-    if (result.status === 'already_queued') {
-      // Already queued — force re-queue
-      const forceResult = await apiSyncLogin(login.id, { force: true })
-      const idx = logins.value.findIndex(l => l.id === login.id)
-      if (idx >= 0) logins.value[idx].last_sync_status = 'queued'
-      toast.add({ severity: 'info', summary: 'Re-queued', detail: `${login.label} sync re-queued`, life: 3000 })
-    } else if (result.status === 'running') {
-      toast.add({ severity: 'warn', summary: 'In Progress', detail: `${login.label} sync already running`, life: 4000 })
-    } else {
-      const idx = logins.value.findIndex(l => l.id === login.id)
-      if (idx >= 0) logins.value[idx].last_sync_status = 'queued'
-      toast.add({ severity: 'info', summary: 'Queued', detail: `${login.label} queued for sync`, life: 3000 })
-    }
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
-  }
-}
-
-async function syncEnabledLogins() {
-  syncingAllLogins.value = true
-  try {
-    const result = await apiSyncLogins(null)
-    toast.add({ severity: 'success', summary: 'Queued', detail: `${result.logins_queued} login(s) queued for sync`, life: 5000 })
-    if (logins.value.length) await loadLogins()
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Sync Failed', detail: err.message, life: 5000 })
-  } finally {
-    syncingAllLogins.value = false
-  }
-}
-
-async function startInteractiveAuthForLogin(login) {
-  interactiveAuthLoading[login.id] = true
-  try {
-    const result = await startInteractiveAuth(login.id)
-    toast.add({ severity: 'info', summary: 'Interactive Auth Started', detail: result.message, life: 5000 })
-    setTimeout(async () => {
-      await loadLogins()
-    }, 3000)
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Failed to Start', detail: err.message, life: 5000 })
-  } finally {
-    interactiveAuthLoading[login.id] = false
-  }
-}
-
-
-function openLoginDialog(login = null) {
-  if (login) {
-    loginDialogEdit.value = true
-    loginEditId.value = login.id
-    loginForm.value = { provider_key: login.provider_key, institution: login.institution || '', label: login.label, username: login.username || '', password: '', login_url: login.login_url || '', account_type: login.account_type, tool_key: login.tool_key || 'financial_scraper', enabled: login.enabled, sort_order: login.sort_order }
-  } else {
-    loginDialogEdit.value = false
-    loginEditId.value = null
-    loginForm.value = defaultLoginForm()
-  }
-  loginDialogVisible.value = true
-}
-
-async function saveLogin() {
-  const data = { ...loginForm.value, institution: loginForm.value.institution || null, login_url: loginForm.value.login_url || null, username: loginForm.value.username || null, password: loginForm.value.password || null, tool_key: loginForm.value.tool_key || 'financial_scraper' }
-  try {
-    if (loginDialogEdit.value) { await updateLogin(loginEditId.value, data); toast.add({ severity: 'success', summary: 'Updated', detail: data.label, life: 3000 }) }
-    else { await createLogin(data); toast.add({ severity: 'success', summary: 'Created', detail: data.label, life: 3000 }) }
-    loginDialogVisible.value = false
-    await loadLogins()
-  } catch (err) { toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 }) }
-}
-
-function confirmDeleteLogin(login) {
-  confirm.require({
-    message: `Delete "${login.label}"?`,
-    header: 'Confirm Delete',
-    icon: 'pi pi-trash',
-    acceptClass: 'p-button-danger',
-    accept: async () => {
-      try { await apiDeleteLogin(login.id); toast.add({ severity: 'info', summary: 'Deleted', detail: login.label, life: 3000 }); await loadLogins() }
-      catch (err) { toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 }) }
-    },
-  })
-}
-
-async function toggleEnabled(login) {
-  const newVal = !login.enabled
-  login.enabled = newVal
-  try { await updateLogin(login.id, { ...login, enabled: newVal, login_url: login.login_url || null, password: null }) }
-  catch (err) { login.enabled = !newVal; toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 }) }
-}
-
-function searchProviders(event) { filteredProviders.value = providers.value.filter(p => p.toLowerCase().includes(event.query.toLowerCase())) }
-
-// Import
-async function handleFileUpload(event) {
-  const file = event.files[0]
-  if (!file) return
-  importFile.value = file
-  try { importPreviewData.value = await importPreview(file); importSelectedRows.value = [...importPreviewData.value.matched] }
-  catch (err) { toast.add({ severity: 'error', summary: 'Parse Error', detail: err.message, life: 4000 }) }
-}
-
-function clearImport() { importPreviewData.value = null; importFile.value = null; importSelectedRows.value = [] }
-
-async function runImport() {
-  if (!importFile.value || !importSelectedRows.value.length) return
-  importing.value = true
-  try {
-    const newIds = importSelectedRows.value.filter(r => !r.is_duplicate).map(r => r.row_id)
-    const overwriteIds = importSelectedRows.value.filter(r => r.is_duplicate).map(r => r.row_id)
-    const result = await importLogins(importFile.value, newIds, overwriteIds)
-    const parts = []
-    if (result.imported) parts.push(`${result.imported} imported`)
-    if (result.updated) parts.push(`${result.updated} updated`)
-    if (result.skipped) parts.push(`${result.skipped} skipped`)
-    toast.add({ severity: 'success', summary: 'Import Complete', detail: parts.join(', '), life: 5000 })
-    clearImport()
-    await loadLogins()
-  } catch (err) { toast.add({ severity: 'error', summary: 'Import Failed', detail: err.message, life: 4000 }) } finally { importing.value = false }
-}
-
-// Promos
-function openPromoDialog(promo = null) {
-  if (promo) {
-    promoDialogEdit.value = true
-    promoEditId.value = promo.id
-    promoForm.value = {
-      financial_account_id: promo.financial_account_id,
-      promo_type: promo.promo_type,
-      apr_rate: promo.apr_rate,
-      regular_apr: promo.regular_apr,
-      start_date: promo.start_date || '',
-      end_date: promo.end_date,
-      original_amount: promo.original_amount,
-      description: promo.description || '',
-    }
-  } else {
-    promoDialogEdit.value = false
-    promoEditId.value = null
-    promoForm.value = defaultPromoForm()
-  }
-  promoDialogVisible.value = true
-}
-
-async function savePromo() {
-  const data = {
-    ...promoForm.value,
-    apr_rate: parseFloat(promoForm.value.apr_rate) || 0,
-    regular_apr: promoForm.value.regular_apr ? parseFloat(promoForm.value.regular_apr) : null,
-    original_amount: promoForm.value.original_amount ? parseFloat(promoForm.value.original_amount) : null,
-    start_date: promoForm.value.start_date || null,
-    description: promoForm.value.description || null,
-  }
-  try {
-    if (promoDialogEdit.value) {
-      await apiUpdatePromo(promoEditId.value, data)
-      toast.add({ severity: 'success', summary: 'Updated', detail: 'Promo period updated', life: 3000 })
-    } else {
-      await createPromo(data)
-      toast.add({ severity: 'success', summary: 'Created', detail: 'Promo period added', life: 3000 })
-    }
-    promoDialogVisible.value = false
-    await loadAll()
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
-  }
-}
-
-function confirmDeletePromo(promo) {
-  const label = promo.account_display_name || promo.account_institution || 'this promo'
-  confirm.require({
-    message: `Delete ${promoTypeLabel(promo.promo_type)} promo for "${label}"?`,
-    header: 'Confirm Delete',
-    icon: 'pi pi-trash',
-    acceptClass: 'p-button-danger',
-    accept: async () => {
-      try {
-        await apiDeletePromo(promo.id)
-        toast.add({ severity: 'info', summary: 'Deleted', detail: 'Promo period removed', life: 3000 })
-        await loadAll()
-      } catch (err) {
-        toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
-      }
-    },
-  })
-}
-
-function promoTypeLabel(type) {
-  return ({ purchase: 'Purchase', balance_transfer: 'Balance Transfer', general: 'General' })[type] || type
-}
-function promoTypeSeverity(type) {
-  return ({ purchase: 'info', balance_transfer: 'warn', general: 'secondary' })[type] || 'secondary'
-}
-function promoUrgencyClass(daysRemaining) {
-  if (daysRemaining <= 0) return 'text-red-400 font-semibold'
-  if (daysRemaining <= 30) return 'text-red-400 font-semibold'
-  if (daysRemaining <= 90) return 'text-amber-400'
-  return ''
-}
-
-function openRewardsDialog(rewards = null) {
-  if (rewards) {
-    rewardsDialogEdit.value = true
-    rewardsEditId.value = rewards.program_id
-    rewardsForm.value = {
-      financial_account_id: rewards.account_id,
-      program_name: rewards.program_name,
-      program_type: rewards.program_type || 'points',
-      unit_name: rewards.unit_name || '',
-      cents_per_unit: rewards.cents_per_unit,
-    }
-  } else {
-    rewardsDialogEdit.value = false
-    rewardsEditId.value = null
-    rewardsForm.value = defaultRewardsForm()
-  }
-  rewardsDialogVisible.value = true
-}
-
-async function saveRewardsProgram() {
-  const data = {
-    ...rewardsForm.value,
-    cents_per_unit: rewardsForm.value.cents_per_unit ? parseFloat(rewardsForm.value.cents_per_unit) : null,
-  }
-  try {
-    if (rewardsDialogEdit.value) {
-      await updateRewardsProgram(rewardsEditId.value, data)
-      toast.add({ severity: 'success', summary: 'Updated', detail: 'Rewards program updated', life: 3000 })
-    } else {
-      await createRewardsProgram(data)
-      toast.add({ severity: 'success', summary: 'Created', detail: 'Rewards program added', life: 3000 })
-    }
-    rewardsDialogVisible.value = false
-    await loadAll()
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 4000 })
-  }
-}
-
-// Helpers (shared helpers in helpers.js, these are App-specific)
-function syncIcon(login) {
-  if (login.last_auth_status === 'needs_2fa') return 'pi pi-exclamation-triangle text-amber-400'
-  if (login.last_auth_status === 'login_failed') return 'pi pi-times-circle text-red-400'
-  const s = login.last_sync_status
-  if (!s) return 'pi pi-minus-circle text-surface-500'
-  if (s === 'queued' || s === 'running') return 'pi pi-spin pi-spinner text-blue-400'
-  if (s === 'succeeded') return 'pi pi-check-circle text-green-400'
-  return 'pi pi-times-circle text-red-400'
-}
-function syncTimestamp(login) {
-  const ts = login.last_sync_finished_at || login.last_sync_started_at
-  if (!ts) return 'Never'
-  return relativeTime(ts)
-}
-
-onMounted(async () => {
-  await loadAll()
+onMounted(() => {
+  loadAll()
+  // Poll for agent sessions needing attention every 5s
+  agentSessionsPollTimer = setInterval(loadActiveSessions, 5000)
+})
+onUnmounted(() => {
+  stopInteractiveAuthPolling()
+  stopAgentPolling()
+  if (agentSessionsPollTimer) clearInterval(agentSessionsPollTimer)
 })
 </script>
