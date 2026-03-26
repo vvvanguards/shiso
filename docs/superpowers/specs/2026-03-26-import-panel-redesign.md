@@ -123,6 +123,16 @@ Not implemented in v1. All filtering is client-side. This endpoint is a future h
 
 ---
 
+## UI Conventions
+
+Follow existing patterns in the codebase:
+- Use PrimeVue components (`DataTable`, `Column`, `Tag`, `Chips`, `InputText`)
+- Tailwind classes matching the existing dark theme (`bg-shiso-*`, `text-shiso-*`)
+- Existing `Section.vue` wrapper and `SectionHeader` pattern
+- No custom CSS unless the library cannot achieve the needed look
+
+---
+
 ## Files to Change
 
 | File | Change |
