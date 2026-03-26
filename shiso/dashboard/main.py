@@ -405,6 +405,48 @@ async def import_start(file: UploadFile, filter_mode: str = "rule"):
 
     scraper.apply_matched_results(session.id, matched.get("mappings", []))
 
+    # Fire enrichment for all unique domains in parallel
+    unique_domains = list(set(r.get("domain", "") for r in raw_rows if r.get("domain")))
+
+    # Build a lookup of existing domain patterns once (avoids repeated cache rebuilds)
+    # db.get_provider_mappings() with no args returns ALL mappings (source=None)
+    existing_mappings = db.get_provider_mappings()
+    existing_domains = {m["domain_pattern"] for m in existing_mappings}
+
+    enrichment_tasks = []
+    for domain in unique_domains:
+        # Only enrich if domain is not already in provider_mappings (any source)
+        if domain not in existing_domains:
+            from shiso.scraper.services.provider_matcher import enrich_domain_metadata
+            enrichment_tasks.append(asyncio.create_task(enrich_domain_metadata(domain)))
+
+    # Wait for all enrichment (with timeout), tracking progress
+    enriched_count = 0
+    enrichment_total = len(enrichment_tasks)
+    if enrichment_tasks:
+        done, pending = await asyncio.wait(enrichment_tasks, timeout=15.0, return_exceptions=True)
+        for task in pending:
+            task.cancel()
+        for task in done:
+            result = task.result()
+            if result:
+                enriched_count += 1
+                # Upsert into provider_mappings with enrichment fields
+                # Note: provider_key is intentionally omitted — enrichment doesn't derive it
+                db.upsert_provider_mapping(
+                    domain_pattern=result.get("domain", ""),
+                    provider_key="",  # empty = no change to existing provider_key
+                    label=result.get("label", ""),
+                    account_type=result.get("category", "Other"),
+                    source="enriched",
+                    login_url=result.get("login_url"),
+                    favicon_url=result.get("favicon_url"),
+                    is_financial=result.get("is_financial"),
+                )
+
+    # Return enrichment summary in response for frontend to display
+    enrichment_result = {"current": enriched_count, "total": enrichment_total}
+
     existing: dict[tuple[str, str], scraper.ScraperLogin] = {}
     with scraper.SessionLocal() as db_session:
         for login in db_session.query(scraper.ScraperLogin).all():
@@ -428,6 +470,7 @@ async def import_start(file: UploadFile, filter_mode: str = "rule"):
             "total": len(candidates),
             "duplicates": duplicates,
         },
+        "enrichment_result": enrichment_result,
     }
 
 

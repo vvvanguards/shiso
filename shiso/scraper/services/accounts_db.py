@@ -1216,6 +1216,9 @@ class AccountsDB:
         account_type: str,
         source: str = "learned",
         confidence: float | None = None,
+        login_url: str | None = None,
+        favicon_url: str | None = None,
+        is_financial: bool | None = None,
     ) -> ProviderMapping:
         """Insert or update a provider mapping."""
         with self.session() as session:
@@ -1223,11 +1226,20 @@ class AccountsDB:
                 ProviderMapping.domain_pattern == domain_pattern
             ).first()
             if existing:
-                existing.provider_key = provider_key
+                # Only overwrite provider_key if a non-empty value is provided
+                # (enrichment doesn't derive provider_key, so we preserve existing)
+                if provider_key:
+                    existing.provider_key = provider_key
                 existing.label = label
                 existing.account_type = account_type
                 existing.source = source
                 existing.confidence = confidence
+                if login_url is not None:
+                    existing.login_url = login_url
+                if favicon_url is not None:
+                    existing.favicon_url = favicon_url
+                if is_financial is not None:
+                    existing.is_financial = is_financial
             else:
                 mapping = ProviderMapping(
                     domain_pattern=domain_pattern,
@@ -1236,6 +1248,9 @@ class AccountsDB:
                     account_type=account_type,
                     source=source,
                     confidence=confidence,
+                    login_url=login_url,
+                    favicon_url=favicon_url,
+                    is_financial=is_financial,
                 )
                 session.add(mapping)
                 existing = mapping
