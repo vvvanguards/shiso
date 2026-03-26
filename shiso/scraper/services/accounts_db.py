@@ -12,7 +12,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..database import SessionLocal, init_db
+from ..database import SessionLocal, get_balance_type_id, init_db
 from ..models.accounts import (
     AccountSnapshot,
     AccountStatement,
@@ -579,8 +579,8 @@ class AccountsDB:
     def _get_or_create_account_type(self, session: Session, name: str) -> FinancialAccountType:
         account_type = session.query(FinancialAccountType).filter_by(name=name).first()
         if not account_type:
-            balance_type = _BALANCE_TYPE_MAP.get(name, "liability")
-            account_type = FinancialAccountType(name=name, balance_type=balance_type)
+            balance_type_id = get_balance_type_id(name)
+            account_type = FinancialAccountType(name=name, balance_type_id=balance_type_id)
             session.add(account_type)
             session.flush()
         return account_type
@@ -1432,25 +1432,10 @@ def _infer_account_category(provider_key: str, row: dict) -> str:
     return "Other"
 
 
-# Balance type lookup matching ACCOUNT_TYPES in database.py
-_BALANCE_TYPE_MAP = {
-    "Credit Card": "liability",
-    "Loan": "liability",
-    "Mortgage": "liability",
-    "Line of Credit": "liability",
-    "Utility": "liability",
-    "Insurance": "liability",
-    "Checking": "asset",
-    "Savings": "asset",
-    "Investment": "asset",
-    "Property": "asset",
-    "Other": "liability",
-    "Unknown": "liability",
-}
 
-
-def _infer_balance_type(category: str) -> str:
-    return _BALANCE_TYPE_MAP.get(category, "liability")
+def _infer_balance_type(category: str) -> int:
+    """Infer balance_type_id from account category string. Defaults to 2 (liability)."""
+    return get_balance_type_id(category)
 
 
 # Import Session CRUD

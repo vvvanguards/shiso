@@ -136,11 +136,16 @@ def match_test(
     use_llm: bool = typer.Option(False, "--llm", help="Use LLM for unmatched domains"),
     limit: int = typer.Option(0, "--limit", "-n", help="Limit LLM calls to N domains (0 = all)"),
     analyst_llm: Optional[str] = typer.Option(None, "--analyst-llm"),
+    filter_mode: str = typer.Option("rule", "--filter", help="Filter rows before matching: none|rule|llm"),
 ) -> None:
     """Test provider matching on a CSV file.
 
     Use --llm to also call LLM for unmatched domains.
     Use --limit to cap LLM calls (e.g., -n 5 to test just 5 domains).
+    Use --filter to pre-filter rows before matching:
+      none  — import everything (default)
+      rule  — keep only financial/utility/insurance/property domains
+      llm   — LLM classification (requires ANALYST_LLM configured)
     """
     from dotenv import load_dotenv
     load_dotenv()
@@ -151,7 +156,9 @@ def match_test(
     console.print(f"[cyan]ANALYST_LLM = {os.environ.get('ANALYST_LLM', 'not set')}[/cyan]")
 
     from pathlib import Path
-    from shiso.scraper.services.password_import import parse_csv, aggregate_by_domain
+    from shiso.scraper.services.password_import import (
+        FilterMode, filter_rows, filter_rows_llm, parse_csv, aggregate_by_domain,
+    )
     from shiso.scraper.services.provider_matcher import match_providers_sync, match_providers
 
     path = Path(csv_path)
@@ -159,9 +166,25 @@ def match_test(
         console.print(f"[red]File not found: {csv_path}[/red]")
         raise typer.Exit(1)
 
+    # Validate filter mode
+    try:
+        mode = FilterMode(filter_mode.lower())
+    except ValueError:
+        console.print(f"[red]Invalid filter mode: {filter_mode!r}. Use: none, rule, llm[/red]")
+        raise typer.Exit(1)
+
     content = path.read_text(encoding="utf-8-sig")
     rows = parse_csv(content)
     console.print(f"[cyan]Parsed {len(rows)} rows from CSV[/cyan]")
+
+    # Apply pre-filter before matching
+    if mode == FilterMode.RULE:
+        rows = filter_rows(rows, mode)
+        console.print(f"[cyan]Rule filter: {len(rows)} rows remain[/cyan]")
+    elif mode == FilterMode.LLM:
+        console.print(f"[cyan]LLM filter: classifying rows...[/cyan]")
+        rows = asyncio.run(filter_rows_llm(rows))
+        console.print(f"[cyan]LLM filter: {len(rows)} rows remain[/cyan]")
 
     aggregated = aggregate_by_domain(rows)
     console.print(f"[cyan]Aggregated into {len(aggregated)} unique domains[/cyan]")

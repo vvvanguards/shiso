@@ -2,6 +2,7 @@
 Shared database configuration for Shiso.
 """
 
+from functools import lru_cache
 from pathlib import Path
 
 from sqlalchemy import create_engine, event, text
@@ -32,21 +33,40 @@ def _set_sqlite_pragma(dbapi_conn, connection_record):
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
-# Canonical account types with asset/liability classification.
-ACCOUNT_TYPES = {
-    "Credit Card":      "liability",
-    "Loan":             "liability",
-    "Mortgage":         "liability",
-    "Line of Credit":   "liability",
-    "Utility":          "liability",
-    "Insurance":        "liability",
-    "Checking":         "asset",
-    "Savings":          "asset",
-    "Investment":       "asset",
-    "Property":         "asset",
-    "Other":            "liability",
-    "Unknown":          "liability",
+# Canonical account types mapping to balance_type_id (1=asset, 2=liability).
+ACCOUNT_TYPE_IDS = {
+    "Credit Card":      2,
+    "Loan":             2,
+    "Mortgage":         2,
+    "Line of Credit":   2,
+    "Utility":          2,
+    "Insurance":        2,
+    "Checking":         1,
+    "Savings":          1,
+    "Investment":       1,
+    "Property":         1,
+    "Other":            2,
+    "Unknown":          2,
 }
+
+
+@lru_cache(maxsize=1)
+def _build_balance_type_cache() -> dict[str, int]:
+    """Build account_type_name -> balance_type_id map from DB. Cached permanently."""
+    from .models.accounts import FinancialAccountType
+
+    with Session(engine) as session:
+        rows = session.query(FinancialAccountType.name, FinancialAccountType.balance_type_id).all()
+    return {name: balance_type_id for name, balance_type_id in rows}
+
+
+def get_balance_type_id(account_type_name: str) -> int:
+    """Look up balance_type_id for an account type name from the DB.
+
+    Returns 2 (liability) as default if the account type is not found.
+    Uses an LRU-cached DB query — only hits the DB once per process.
+    """
+    return _build_balance_type_cache().get(account_type_name, 2)
 
 
 def _import_models() -> None:
@@ -251,17 +271,17 @@ def run_alembic_migrations() -> None:
 
 
 def _seed_account_types() -> None:
-    """Ensure all canonical account types exist with correct balance_type."""
+    """Ensure all canonical account types exist with correct balance_type_id."""
     from .models.accounts import FinancialAccountType
 
     with Session(engine) as session:
-        for name, balance_type in ACCOUNT_TYPES.items():
+        for name, balance_type_id in ACCOUNT_TYPE_IDS.items():
             existing = session.query(FinancialAccountType).filter_by(name=name).first()
             if existing:
-                if existing.balance_type != balance_type:
-                    existing.balance_type = balance_type
+                if existing.balance_type_id != balance_type_id:
+                    existing.balance_type_id = balance_type_id
             else:
-                session.add(FinancialAccountType(name=name, balance_type=balance_type))
+                session.add(FinancialAccountType(name=name, balance_type_id=balance_type_id))
         session.commit()
 
 

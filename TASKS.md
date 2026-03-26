@@ -1,43 +1,91 @@
-# Shiso — Roadmap (Prioritized)
+# Shiso — Roadmap
 
-## Tier 1: Do First (Reliability)
+**Mission:** Local-first financial aggregation via browser scraping. One thing, done extremely well.
 
-- [x] **Timeout per provider** — cap total wall-clock time per provider scrape, not just per-step. A stuck agent can burn through all 50 steps doing nothing useful ← **HIGH PRIORITY**
-- [ ] **Retry with backoff** — if the agent fails on a provider, retry once before marking as failed (currently one-shot)
-- [ ] **Session health check** — before scraping, verify the browser profile isn't locked by another Chrome process (`_kill_stale_chrome` exists but is fragile)
-- [ ] **Credential validation** — warn on `shiso scrape` if any targeted logins are missing credentials, before launching Chrome
+**What we are:** AI-powered browser automation for financial accounts. NOT a general-purpose scraper. NOT going broad. NOT Plaid. We do what Plaid can't: promo APRs, rewards balances, statement PDFs, any institution.
 
-## Tier 2: Observability (User Experience)
+**What we are NOT:** Generic automation, Zillow leads, utility bill scraping, extensible tool platform.
 
-- [ ] **Error surfacing** — when a login is flagged `needs_2fa` or `login_failed`, show it prominently in the dashboard with a "retry interactive" button ← **HIGH PRIORITY**
-- [ ] **Dashboard sync status polling** — auto-refresh sync status while a run is in progress instead of requiring manual refresh
-- [ ] **Run history view** — show past sync runs with metrics (accounts found, steps, failures) per provider in the dashboard
+---
 
-## Tier 3: Data Integrity
+## Tier 1: Make It Bulletproof
 
-- [ ] **Snapshot diffing** — detect when account balances change vs when the scraper just missed them (0 accounts ≠ 0 balance)
-- [ ] **Stale data warning** — flag accounts that haven't been successfully scraped in N days
-- [ ] **Statement naming & parsing** — downloaded PDFs need consistent naming (`{provider}_{account}_{date}.pdf`) and content extraction (dates, amounts, transaction tables) for dashboard display ← **HIGH PRIORITY**
+### Reliability
+- [ ] **Retry with backoff** — if a provider fails, retry once before marking failed. Currently one-shot.
+- [ ] **Session health check** — verify Chrome profile isn't locked before scraping. Current `_kill_stale_chrome` is fragile.
+- [ ] **Credential validation** — warn before scraping if any targeted logins are missing credentials.
 
-## Tier 4: Features
+### Data Integrity
+- [ ] **Snapshot diffing** — distinguish "scraper missed accounts" (0 returned) from "balance is actually 0". Prevents false zeros from looking like real data.
+- [ ] **Stale data warning** — flag accounts that haven't been successfully scraped in N days.
 
-- [ ] **Rewards tracking** — credit card points, frequent flyer miles, cashback balances. Either extend `AccountOutput` with rewards fields or a separate `RewardsOutput` schema with history tracking ← **HIGH PRIORITY**
-- [ ] **Password manager integration** — Bitwarden CLI (`bw`) for live credential sync instead of CSV re-import. Auto-refresh stale passwords
-- [ ] **Bitwarden import** — alternative to Chrome CSV: `bw export --format json` → parse and import
+---
 
-## Tier 5: Quality of Life
+## Tier 2: Speed & Optimization
 
-- [ ] **`shiso scrape --dry-run`** — show what would be scraped without launching Chrome
-- [ ] **Per-provider config in dashboard** — edit `start_url`, `dashboard_url`, enable/disable without touching TOML
-- [ ] **Bulk sync from dashboard** — "sync all" exists, add provider-group sync (e.g. all credit cards)
+### Already Done
+- **SyncType system** — design spec exists (`PLAN-fast-sync.md`). `fast_sync: bool` needs to be replaced with proper `sync_types` table + enum. This unblocks per-type scheduling.
+
+### In Flight
+- **Rewards as assets** — PRs #5 and #6 merged. `RewardsSection.vue`, migration, `current_balance` on `RewardsProgram`, and scrape integration still pending.
+
+### Not Started
+- [ ] **Implement SyncType system** — `balance` (fast, known accounts) vs `full` (discovery + enrichment + statements) vs `statements_only`. DB-driven, not bool.
+- [ ] **Parallel provider sync** — worker processes one provider at a time. Parallel execution would be a significant speed win.
+- [ ] **Session reuse / warm start** — reuse Chrome session across providers instead of launching fresh each time.
+
+---
+
+## Tier 3: Observability
+
+### Already Done
+- **Error surfacing in dashboard** — `needs_2fa` / `login_failed` flags surface in dashboard (multiple rounds of improvement).
+
+### Not Started
+- [ ] **Dashboard sync status polling** — auto-refresh while a run is in progress instead of manual refresh.
+- [ ] **Run history view** — past sync runs with metrics (accounts found, steps, failures) per provider.
+
+---
+
+## Tier 4: UI/UX — Simplify
+
+- [ ] **Per-provider config in dashboard** — edit `start_url`, `dashboard_url`, enable/disable without touching TOML.
+- [ ] **Bulk sync by group** — sync all credit cards, all banks — not just "sync all" and not individual.
+- [ ] **`shiso scrape --dry-run`** — show what would be scraped without launching Chrome.
+
+---
+
+## Tier 5: Nice to Have
+
+- [ ] **Bitwarden import** — `bw export --format json` → parse and import, as alternative to Chrome CSV.
+- [ ] **Statement content extraction** — PDFs are downloaded per-account but content (transactions, amounts, dates) isn't parsed into structured data for the dashboard.
+- [ ] **Rewards tracking** — partially done via rewards-as-assets. Scrape integration to update `current_balance` on each run is still needed.
+
+---
+
+## Scope
+
+**In scope (financial):** Checking, savings, credit cards, brokerage, utilities (electric, water, gas), rewards programs.
+
+**Out of scope:**
+- ~~Zillow Rental Manager / real estate~~ — not financial
+- ~~Extensible tool / workflow registry~~ — over-engineered for the actual use case
+- ~~Plaid integration~~ — loses promo APRs, rewards details, statement PDFs, unsupported institutions. We do what Plaid can't.
+- ~~General-purpose browser automation platform~~ — scope creep
 
 ---
 
 ## Completed
 
-- **2026-03-17: Timeout per provider** — Added configurable `provider_timeout` (default 30 min) in `[agent]` config, per-provider override via `[providers.X]` config. Wall-clock timeout enforced via `asyncio.wait_for()`. On timeout:
-  - Browser session killed gracefully
-  - Sync run marked with status `"timeout"`
-  - Metrics include `timed_out`, `timeout_seconds`, `elapsed_seconds`
-  - Other providers continue running (no blocking)
-  - Log output shows `[PROVIDER] TIMEOUT: exceeded Xs limit after Y.Ys`
+- **Timeout per provider** — wall-clock cap per provider, graceful kill, timeout status in metrics (2026-03-17)
+- **Rewards tracking** — schema, API endpoints, dashboard display, rewards-as-assets design (2026-03-24)
+- **Soft-delete for logins** — `is_deleted=true` with undelete support
+- **Alembic migrations** — DB schema versioning
+- **Balance-only fast-sync** — skip statements for known accounts
+- **Per-account statement download** — one PDF per account, named consistently
+- **Adaptive scraper tuning** — typed analyst models for self-tuning
+- **LLM-based 2FA detection** — assess auth state before retry
+- **Browser-use agent history** — saved to disk per scrape run
+- **Sectioned sidebar** — grouped navigation
+- **Auto-sync scheduling** — worker auto-queues full syncs on interval
+- **`account_number` as dedup key** — stable identity across renames

@@ -369,13 +369,32 @@ class SingleLoginSyncRequest(BaseModel):
 
 
 @app.post("/api/logins/import/start")
-async def import_start(file: UploadFile):
-    """Parse CSV, match providers locally, detect duplicates. Returns session immediately."""
+async def import_start(file: UploadFile, filter_mode: str = "rule"):
+    """Parse CSV, match providers locally, detect duplicates. Returns session immediately.
+
+    filter_mode: none|rule|llm — controls pre-import row filtering.
+      none  — import all rows
+      rule  — keep only financial/utility/insurance/property domains (default)
+      llm   — LLM classification
+    """
+    from ..scraper.services.password_import import FilterMode, filter_rows, filter_rows_llm
+
     content = (await file.read()).decode("utf-8-sig")
     raw_rows = scraper.parse_csv(content)
 
     if not raw_rows:
         return {"session_id": None, "candidates": [], "summary": {"total": 0, "duplicates": 0}}
+
+    # Apply pre-filter before matching and import
+    try:
+        mode = FilterMode(filter_mode.lower())
+    except ValueError:
+        mode = FilterMode.RULE
+
+    if mode == FilterMode.RULE:
+        raw_rows = filter_rows(raw_rows, mode)
+    elif mode == FilterMode.LLM:
+        raw_rows = await filter_rows_llm(raw_rows)
 
     matched = scraper.match_providers_sync(raw_rows)
 
