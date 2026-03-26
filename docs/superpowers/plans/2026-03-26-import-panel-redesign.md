@@ -221,7 +221,7 @@ git commit -m "feat: add enrich_domain_metadata for parallel domain enrichment"
 - Modify: `shiso/scraper/api.py` (around the `import_start` endpoint)
 - Modify: `shiso/dashboard/main.py` (the `import_start` function)
 
-Note: The `import_start` endpoint lives in `main.py` as `import_start`. Check both files.
+Note: The `import_start` endpoint is in `main.py` (already `async def` — the `asyncio.wait()` call will work directly). `api.py` may have a wrapper; check both files but modification is only needed in `main.py`.
 
 - [ ] **Step 1: Update `upsert_provider_mapping` to accept enrichment fields**
 
@@ -246,7 +246,10 @@ def upsert_provider_mapping(
             ProviderMapping.domain_pattern == domain_pattern
         ).first()
         if existing:
-            existing.provider_key = provider_key
+            # Only overwrite provider_key if a non-empty value is provided
+            # (enrichment doesn't derive provider_key, so we preserve existing)
+            if provider_key:
+                existing.provider_key = provider_key
             existing.label = label
             existing.account_type = account_type
             existing.source = source
