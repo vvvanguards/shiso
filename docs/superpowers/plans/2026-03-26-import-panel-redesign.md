@@ -283,11 +283,15 @@ In `import_start` in `main.py`, after calling `match_providers_sync(raw_rows)` a
 ```python
 # Fire enrichment for all unique domains in parallel
 unique_domains = list(set(r.get("domain", "") for r in raw_rows if r.get("domain")))
+
+# Build a lookup of existing domain patterns once (avoids repeated cache rebuilds)
+existing_mappings = db.get_provider_mappings()  # returns all, source-independent
+existing_domains = {m["domain_pattern"] for m in existing_mappings}
+
 enrichment_tasks = []
 for domain in unique_domains:
-    # Only enrich if not already in provider_mappings with label
-    existing = db.get_provider_mappings(source="enriched")
-    if not any(m["domain_pattern"] == domain for m in existing):
+    # Only enrich if domain is not already in provider_mappings (any source)
+    if domain not in existing_domains:
         from shiso.scraper.services.provider_matcher import enrich_domain_metadata
         import asyncio
         enrichment_tasks.append(asyncio.create_task(enrich_domain_metadata(domain)))
@@ -305,9 +309,11 @@ if enrichment_tasks:
         if result:
             enriched_count += 1
             # Upsert into provider_mappings with enrichment fields
+            # Note: provider_key is intentionally omitted — enrichment doesn't derive it,
+            # and leaving it out preserves any existing provider_key in an update.
             db.upsert_provider_mapping(
                 domain_pattern=result.get("domain", ""),
-                provider_key=result.get("provider_key", ""),
+                provider_key="",  # empty string = no change to existing provider_key
                 label=result.get("label", ""),
                 account_type=result.get("category", "Other"),
                 source="enriched",
@@ -453,6 +459,11 @@ git commit -m "feat: add filter state to useImport composable"
 
 - [ ] **Step 1: Replace Toolbar with filter bar**
 
+Check if lodash is available: `grep -r "lodash" shiso/dashboard/frontend/package.json`
+If not present, add: `npm install lodash @types/lodash` (or use `vueuse` `useDebounce` if preferred).
+
+
+
 Remove the `<Toolbar>` block. Replace with:
 
 ```html
@@ -468,7 +479,8 @@ Remove the `<Toolbar>` block. Replace with:
   <div class="flex items-center gap-3">
     <span class="text-xs font-semibold text-shiso-500 uppercase tracking-wider">Search:</span>
     <InputText
-      v-model="searchQuery"
+      :modelValue="searchQuery"
+      @update:modelValue="onSearchInput"
       placeholder="Filter: credit cards, banks, chase..."
       class="flex-1"
       size="small"
@@ -489,26 +501,42 @@ Remove the `<Toolbar>` block. Replace with:
     </div>
   </div>
 
-  <!-- Category chips -->
-  <div class="flex flex-wrap gap-2 items-center">
-    <span class="text-xs font-semibold text-shiso-500 uppercase tracking-wider mr-1">Filter:</span>
-    <template v-for="cat in CATEGORIES" :key="cat.key">
-      <Button
-        :label="cat.label"
-        :icon="cat.icon"
+  <!-- Category chips + mode badges -->
+  <div class="flex flex-wrap gap-2 items-center justify-between">
+    <div class="flex flex-wrap gap-2 items-center">
+      <span class="text-xs font-semibold text-shiso-500 uppercase tracking-wider mr-1">Filter:</span>
+      <template v-for="cat in CATEGORIES" :key="cat.key">
+        <Button
+          :label="cat.label"
+          :icon="cat.icon"
+          size="small"
+          :severity="activeCategories.includes(cat.key) ? 'primary' : 'secondary'"
+          :outlined="!activeCategories.includes(cat.key)"
+          @click="toggleCategory(cat.key)"
+          class="text-xs"
+        />
+      </template>
+    </div>
+    <!-- Mode badges (existing behavior retained) -->
+    <div class="flex gap-1 items-center">
+      <span class="text-xs text-shiso-500 mr-1">Mode:</span>
+      <Button v-for="mode in ['Rule', 'LLM', 'Off']" :key="mode"
+        :label="mode"
         size="small"
-        :severity="activeCategories.includes(cat.key) ? 'primary' : 'secondary'"
-        :outlined="!activeCategories.includes(cat.key)"
-        @click="toggleCategory(cat.key)"
+        :severity="filterMode === mode ? 'primary' : 'secondary'"
+        :outlined="filterMode !== mode"
+        @click="filterMode = mode"
         class="text-xs"
       />
-    </template>
+    </div>
   </div>
 </div>
 ```
 
-Add `CATEGORIES` constant to `<script setup>`:
+Add to `<script setup>`:
 ```javascript
+import { watch } from 'vue'
+
 const CATEGORIES = [
   { key: 'Bank', label: '🏦 Banks' },
   { key: 'Credit Card', label: '💳 Credit Cards' },
@@ -517,6 +545,27 @@ const CATEGORIES = [
   { key: 'Insurance', label: '🔒 Insurance' },
   { key: 'selected_only', label: '✓ Selected Only' },
 ]
+
+const filterMode = ref('Rule')  // 'Rule' | 'LLM' | 'Off'
+
+// 200ms debounced search (avoids re-filtering on every keystroke)
+import { debounce } from 'lodash'
+const debouncedSearch = debounce((val) => {
+  searchQuery.value = val
+}, 200)
+
+// For the InputText: use @update:modelValue with the debounced setter
+function onSearchInput(val) {
+  debouncedSearch(val)
+}
+
+function selectAll() {
+  selectedRows.value = [...filteredCandidates.value]
+}
+
+function deselectAll() {
+  selectedRows.value = []
+}
 ```
 
 - [ ] **Step 2: Group candidates by domain**
