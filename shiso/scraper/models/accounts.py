@@ -206,6 +206,9 @@ class ProviderMapping(Base):
     account_type: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str] = mapped_column(Text, nullable=False, default="baseline")
     confidence: Mapped[Optional[float]] = mapped_column(Float)
+    login_url: Mapped[Optional[str]] = mapped_column(Text)
+    favicon_url: Mapped[Optional[str]] = mapped_column(Text)
+    is_financial: Mapped[Optional[bool]] = mapped_column(Boolean)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
