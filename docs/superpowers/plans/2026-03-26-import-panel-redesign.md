@@ -288,7 +288,9 @@ In `import_start` in `main.py`, after calling `match_providers_sync(raw_rows)` a
 unique_domains = list(set(r.get("domain", "") for r in raw_rows if r.get("domain")))
 
 # Build a lookup of existing domain patterns once (avoids repeated cache rebuilds)
-existing_mappings = db.get_provider_mappings()  # returns all, source-independent
+# db.get_provider_mappings() with no args returns ALL mappings (source=None)
+# Use .get_provider_mappings() on the ScraperDB instance (the `db` variable in import_start)
+existing_mappings = db.get_provider_mappings()
 existing_domains = {m["domain_pattern"] for m in existing_mappings}
 
 enrichment_tasks = []
@@ -304,7 +306,7 @@ enriched_count = 0
 enrichment_total = len(enrichment_tasks)
 if enrichment_tasks:
     import asyncio
-    done, pending = await asyncio.wait(enrichment_tasks, timeout=15.0)
+    done, pending = await asyncio.wait(enrichment_tasks, timeout=15.0, return_exceptions=True)
     for task in pending:
         task.cancel()
     for task in done:
