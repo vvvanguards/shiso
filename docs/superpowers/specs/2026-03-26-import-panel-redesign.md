@@ -66,16 +66,15 @@ Replaces the current `Toolbar` with a compact horizontal filter bar containing:
 
 ### Collapsible Domain Groups
 
-Candidates grouped by domain, with enriched data:
+Candidates grouped by domain. Each row is a login credential (username + URL), not a financial account. The enriched provider name appears in the group header:
 
 ```
-▼ chase.com (3)
-  Chase Sapphire Reserve     username@email    new
-  Chase Total Checking       checking_user    new
-  Chase Slate               card_user        exists [dimmed]
-▼ capitalone.com (2)
-  Capital One Venture X     me@email         new
-  Capital One HYSA          savings_user     new
+▼ Chase (chase.com) (2)
+  john.doe@gmail.com        https://chase.com     new
+  JaneSmith@email.com        https://chase.com     exists [dimmed]
+▼ Capital One (capitalone.com) (2)
+  me@gmail.com               https://capitalone.com  new
+  savings@gmail.com          https://capitalone.com  new
 ```
 
 - Group header: enriched name + domain + count badge
@@ -86,9 +85,9 @@ Candidates grouped by domain, with enriched data:
 ### DataTable (inside each group)
 
 Columns:
-- Site (name + domain)
+- Site (enriched provider name + domain)
 - Username
-- Provider (enriched label; orange text if `provider_key` is null — no match found)
+- Login URL
 - Status (new / exists / deleted badge)
 
 Duplicates: `opacity: 0.4`, background tint, "exists"/"deleted" Tag.
