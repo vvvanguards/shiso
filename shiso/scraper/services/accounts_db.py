@@ -12,7 +12,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..database import SessionLocal, get_balance_type_id, init_db
+from ..database import SessionLocal, get_balance_type_id, get_balance_type_name, init_db
 from ..models.accounts import (
     AccountSnapshot,
     AccountStatement,
@@ -1285,7 +1285,7 @@ def _snapshot_view_from_values(
     captured_at: datetime,
 ) -> SnapshotView:
     category = _infer_account_category(provider_key, row)
-    balance_type = _infer_balance_type(category)
+    balance_type = get_balance_type_name(get_balance_type_id(category))
     current_balance = row.get("current_balance")
     signed_balance = None if current_balance is None else current_balance * (1 if balance_type == "asset" else -1)
     return SnapshotView(
@@ -1433,9 +1433,6 @@ def _infer_account_category(provider_key: str, row: dict) -> str:
 
 
 
-def _infer_balance_type(category: str) -> int:
-    """Infer balance_type_id from account category string. Defaults to 2 (liability)."""
-    return get_balance_type_id(category)
 
 
 # Import Session CRUD

@@ -69,6 +69,21 @@ def get_balance_type_id(account_type_name: str) -> int:
     return _build_balance_type_cache().get(account_type_name, 2)
 
 
+@lru_cache(maxsize=1)
+def _build_balance_type_name_cache() -> dict[int, str]:
+    """Build balance_type_id -> balance_type_name map from DB. Cached permanently."""
+    from .models.accounts import BalanceType
+
+    with Session(engine) as session:
+        rows = session.query(BalanceType.id, BalanceType.name).all()
+    return {id_: name for id_, name in rows}
+
+
+def get_balance_type_name(balance_type_id: int) -> str:
+    """Look up balance type name from its ID. Returns 'liability' as default."""
+    return _build_balance_type_name_cache().get(balance_type_id, "liability")
+
+
 def _import_models() -> None:
     """Ensure all models are imported so metadata is populated."""
     from .models.accounts import (  # noqa: F401
