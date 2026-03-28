@@ -13,8 +13,7 @@
     "@primevue/themes": "^4.5.4",
     "primeicons": "^7.0.0",
     "primevue": "^4.5.4",
-    "vue": "^3.4.0",
-    "vue-router": "^5.0.4"
+    "vue": "^3.4.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

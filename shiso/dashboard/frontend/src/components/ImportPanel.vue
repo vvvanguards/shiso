@@ -172,6 +172,8 @@ import FileUpload from 'primevue/fileupload'
 import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import Section from './Section.vue'
+import { useImport } from '../composables/useImport.js'
+const { searchQuery, activeCategories, enrichmentProgress, toggleCategory, clearFilters, setSearchQuery, selectedRows } = useImport()
 
 const props = defineProps({
   importSession: { type: Object, default: null },
@@ -269,9 +271,6 @@ const importButtonLabel = computed(() => {
 })
 
 // --- Filter state (wired from useImport) ---
-import { useImport } from '../composables/useImport.js'
-const { searchQuery, activeCategories, enrichmentProgress, toggleCategory, clearFilters, setSearchQuery, selectedRows } = useImport()
-
 function onSearchInput(val) {
   setSearchQuery(val)
 }

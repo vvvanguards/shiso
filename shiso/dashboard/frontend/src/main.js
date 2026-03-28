@@ -7,7 +7,6 @@ import Tooltip from 'primevue/tooltip'
 import 'primeicons/primeicons.css'
 import App from './App.vue'
 import './style.css'
-import { router } from './router/index.js'
 
 const app = createApp(App)
 
@@ -21,7 +20,6 @@ app.use(PrimeVue, {
 })
 app.use(ToastService)
 app.use(ConfirmationService)
-app.use(router)
 app.directive('tooltip', Tooltip)
 
 app.mount('#app')
