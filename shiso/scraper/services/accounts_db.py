@@ -5,6 +5,8 @@ Persistence helpers for scraped financial accounts.
 from __future__ import annotations
 
 import re
+import structlog
+import structlog
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -117,6 +119,9 @@ class SnapshotView:
     captured_at: str
 
 
+log = structlog.get_logger()
+
+
 class AccountsDB:
     """Small service layer for dashboard account state."""
 
@@ -202,6 +207,7 @@ class AccountsDB:
                 )
 
             session.commit()
+            log.info("saved_snapshots", count=len(saved), provider=provider_key)
             return saved
 
     def merge_duplicate_accounts(self, provider_key: str | None = None) -> dict[str, int]:
@@ -1256,6 +1262,7 @@ class AccountsDB:
                 existing = mapping
             session.commit()
             session.refresh(existing)
+            log.debug("upserted_provider_mapping", domain=domain_pattern, provider=existing.provider_key, type=existing.account_type)
             return existing
 
     def delete_provider_mapping(self, domain_pattern: str) -> bool:
@@ -1264,6 +1271,9 @@ class AccountsDB:
             deleted = session.query(ProviderMapping).filter(
                 ProviderMapping.domain_pattern == domain_pattern
             ).delete()
+            if deleted:
+                session.commit()
+                log.debug("deleted_provider_mapping", domain=domain_pattern)
             return deleted > 0
 
     def seed_baseline_providers(self, providers: list[dict]) -> int:
@@ -1288,6 +1298,7 @@ class AccountsDB:
                     session.add(mapping)
                     count += 1
             session.commit()
+            log.info("seeded_baseline_providers", count=count)
         return count
 
 

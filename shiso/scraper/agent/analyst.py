@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import logging
+import structlog
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,7 +20,7 @@ from .playbooks import load_provider_playbook, save_provider_playbook_hints
 from .prompts import render as render_prompt
 from .scraper import ScrapeMetrics
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 CONFIG_PATH = CONFIG_DIR / "scraper.toml"
@@ -153,7 +153,7 @@ def _apply_config_patches(provider_key: str, patch: ConfigPatch) -> None:
     if changed:
         CONFIG_PATH.write_bytes(tomli_w.dumps(config).encode("utf-8"))
         for c in changed:
-            logger.info("Analyst patched config for %s: %s", provider_key, c)
+            log.info("Analyst patched config for %s: %s", provider_key, c)
 
 
 def extract_run_metrics(log_lines: list[str]) -> ScrapeMetrics:
@@ -230,7 +230,7 @@ async def analyze_run(
         return {}
 
     if not _should_analyze(metrics, log_lines):
-        logger.info("No issues detected in %s run, skipping analysis", provider_key)
+        log.info("No issues detected in %s run, skipping analysis", provider_key)
         return {}
 
     playbook = load_provider_playbook(provider_key)
@@ -261,11 +261,11 @@ async def analyze_run(
         {"role": "user", "content": "Analyze these logs and return the JSON lessons."},
     ]
 
-    logger.info("Running post-run analyst for %s (%d log lines)", provider_key, len(log_lines))
+    log.info("Running post-run analyst for %s (%d log lines)", provider_key, len(log_lines))
 
     raw = await llm_chat_fn(messages)
     if not raw:
-        logger.warning("Analyst returned no result for %s", provider_key)
+        log.warning("Analyst returned no result for %s", provider_key)
         return {}
 
     result = AnalystResult.from_dict(raw)
@@ -280,7 +280,7 @@ async def analyze_run(
     )
     hints = playbook.learned_hints()
 
-    logger.info(
+    log.info(
         "Analyst saved hints for %s: %d failed, %d effective, %d tips",
         provider_key,
         len(hints.get("failed_actions", [])),

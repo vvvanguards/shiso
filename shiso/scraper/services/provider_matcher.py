@@ -8,7 +8,7 @@ Two-phase approach:
 from __future__ import annotations
 
 import json
-import logging
+import structlog
 import os
 import re
 from typing import Any
@@ -17,7 +17,7 @@ from ..agent.llm import llm_chat, load_config
 from ..agent.prompts import render as render_prompt
 from .accounts_db import AccountsDB, BASELINE_PROVIDERS
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 KNOWN_KEYWORDS = {
     "bank": "Bank",
@@ -96,9 +96,9 @@ def _learn_domain(domain: str, provider_key: str, label: str, account_type: str,
             source="learned",
             confidence=confidence,
         )
-        logger.info("Learned: %s -> %s (%s, conf=%.2f)", domain, provider_key, account_type, confidence or 0)
+        log.info("Learned: %s -> %s (%s, conf=%.2f)", domain, provider_key, account_type, confidence or 0)
     except Exception as exc:
-        logger.warning("Failed to learn domain %s: %s", domain, exc)
+        log.warning("Failed to learn domain %s: %s", domain, exc)
 
 
 def _looks_like_url_path(text: str) -> bool:
@@ -198,12 +198,12 @@ async def _classify_with_llm(domain: str, name: str) -> dict[str, Any]:
     ]
 
     preset = os.environ.get("ANALYST_LLM", "local")
-    logger.info("LLM classifying unmatched domain: %s (%s)", domain, preset)
+    log.info("LLM classifying unmatched domain: %s (%s)", domain, preset)
 
     try:
         result = await llm_chat(messages, config)
     except Exception as exc:
-        logger.error("LLM classify failed for %s: %s", domain, exc)
+        log.error("LLM classify failed for %s: %s", domain, exc)
         # Fallback to keyword inference
         return {
             "provider_key": _slugify(name) if name else _slugify(domain),
@@ -311,7 +311,7 @@ async def match_providers(rows: list[dict[str, Any]], llm_limit: int | None = No
     if unmatched_aggregated:
         domains_to_llm = unmatched_aggregated[:llm_limit] if llm_limit else unmatched_aggregated
         remaining = unmatched_aggregated[llm_limit:] if llm_limit else []
-        logger.info("LLM classifying %d domains (limit=%s)", len(domains_to_llm), llm_limit)
+        log.info("LLM classifying %d domains (limit=%s)", len(domains_to_llm), llm_limit)
         for agg in domains_to_llm:
             llm_result = await _classify_with_llm(agg["domain"], agg["name"])
             llm_result["domain"] = agg["domain"]
@@ -350,7 +350,7 @@ async def match_providers(rows: list[dict[str, Any]], llm_limit: int | None = No
     high_confidence = sum(1 for m in expanded if m.get("confidence", 0) >= 0.9)
     needs_review = sum(1 for m in expanded if m.get("confidence", 0) < 0.9)
 
-    logger.info(
+    log.info(
         "Match complete: %d total, %d high confidence, %d needs review, %d LLM calls",
         len(expanded), high_confidence, needs_review, llm_call_count,
     )
@@ -505,6 +505,7 @@ async def enrich_domain_metadata(domain: str) -> dict[str, Any] | None:
                 }
             except Exception:
                 # Fallback: preserve login_url/favicon_url, use domain as label
+                log.warning("Enrichment parse failed for domain=%s, using fallback", domain)
                 return {
                     "domain": domain,
                     "login_url": login_url,
@@ -514,8 +515,8 @@ async def enrich_domain_metadata(domain: str) -> dict[str, Any] | None:
                     "category": "Other",
                 }
     except asyncio.TimeoutError:
-        logger.warning("Enrichment timeout for domain: %s", domain)
+        log.warning("Enrichment timeout for domain: %s", domain)
         return None
     except Exception as exc:
-        logger.warning("Enrichment failed for domain %s: %s", domain, exc)
+        log.warning("Enrichment failed for domain %s: %s", domain, exc)
         return None

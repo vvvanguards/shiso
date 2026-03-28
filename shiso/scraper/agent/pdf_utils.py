@@ -5,11 +5,11 @@ PDF text extraction and LLM-based APR parsing for statement PDFs.
 from __future__ import annotations
 
 import json
-import logging
+import structlog
 from pathlib import Path
 from typing import Any, Callable, Awaitable
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 PDF_TEXT_LIMIT = 32000
 

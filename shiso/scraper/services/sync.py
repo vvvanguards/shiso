@@ -7,7 +7,7 @@ and finalize sync runs with consistent logging and metrics.
 
 from __future__ import annotations
 
-import logging
+import structlog
 from datetime import datetime
 from typing import Any, Callable
 
@@ -21,7 +21,7 @@ from ..agent.llm import llm_chat
 from ..agent.scraper import ScrapeMetrics, scrape_provider
 from ..agent.workflow_drafts import capture_workflow_revision_suggestion
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 
 class SyncRun:
@@ -215,7 +215,7 @@ async def run_sync(
             sync.persisted = accounts_db.save_scrape_results(provider_key, results)
 
     except Exception as exc:
-        logger.exception("Sync failed for %s", provider_key)
+        log.exception("Sync failed for %s", provider_key)
         sync.error = str(exc)
 
     # Post-run analysis — only runs for full syncs
@@ -232,7 +232,7 @@ async def run_sync(
                 n = sum(len(v) for v in hints.values() if isinstance(v, list))
                 on_log(f"[{provider_key}] Analyst saved {n} hint(s)")
         except Exception as exc:
-            logger.warning("Analyst failed for %s: %s", provider_key, exc)
+            log.warning("Analyst failed for %s: %s", provider_key, exc)
 
     if sync_type == SyncType.full and workflow:
         try:
@@ -249,7 +249,7 @@ async def run_sync(
             if suggestion and on_log:
                 on_log(f"[{provider_key}] Analyst drafted workflow revision suggestion for {workflow.key}")
         except Exception as exc:
-            logger.warning("Workflow analyst failed for %s/%s: %s", provider_key, getattr(workflow, "key", "?"), exc)
+            log.warning("Workflow analyst failed for %s/%s: %s", provider_key, getattr(workflow, "key", "?"), exc)
 
     finalize_sync_run(sync)
 

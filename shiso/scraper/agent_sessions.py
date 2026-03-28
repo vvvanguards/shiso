@@ -8,13 +8,13 @@ via HTTP rather than sharing in-memory state.
 
 import asyncio
 import json
-import logging
+import structlog
 import os
 import time
 import urllib.error
 import urllib.request
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 DASHBOARD_URL = os.environ.get("SHISO_DASHBOARD_URL", "http://localhost:8002")
 

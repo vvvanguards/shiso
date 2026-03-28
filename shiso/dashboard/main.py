@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import threading
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -16,16 +17,21 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
+# Configure structured logging first, before any other shiso imports
+from shiso.scraper._logging import configure_logging
+configure_logging()
+
+import structlog
 import shiso.scraper.api as scraper
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 app = FastAPI(title="Finance Dashboard API")
 
@@ -36,6 +42,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def trace_middleware(request: Request, call_next):
+    """Inject X-Trace-ID header and make trace ID available in structlog context."""
+    trace_id = request.headers.get("X-Trace-ID", uuid.uuid4().hex[:8])
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(trace_id=trace_id)
+    request.state.trace_id = trace_id
+    try:
+        response = await call_next(request)
+        response.headers["X-Trace-ID"] = trace_id
+        return response
+    finally:
+        structlog.contextvars.clear_contextvars()
+
 
 db = scraper.AccountsDB()
 
@@ -428,7 +450,11 @@ async def import_start(file: UploadFile, filter_mode: str = "rule"):
         for task in pending:
             task.cancel()
         for task in done:
-            result = task.result()
+            try:
+                result = task.result()
+            except Exception as exc:
+                logging.warning("Domain enrichment failed: %s", exc)
+                continue
             if result:
                 enriched_count += 1
                 # Upsert into provider_mappings with enrichment fields
@@ -1132,7 +1158,7 @@ def _run_interactive_auth_session(login_id: int) -> None:
             )
         )
     except Exception as exc:
-        logger.exception("Interactive auth session crashed for login %s", login_id)
+        log.exception("interactive_auth_session_crashed", login_id=login_id)
         result = {"status": "failed", "message": str(exc), "provider_key": None}
 
     with _interactive_auth_lock:
@@ -1654,6 +1680,7 @@ def get_rewards_summary():
 
 
 scraper.init_db()
+
 
 if __name__ == "__main__":
     import uvicorn

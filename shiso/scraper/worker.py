@@ -8,10 +8,10 @@ Decoupled from the dashboard API — communicates only through the database.
 """
 
 import asyncio
-import logging
 import signal
 import time
 from datetime import datetime, timedelta
+import structlog
 
 from .agent.run import load_accounts
 from .database import SessionLocal, init_db
@@ -20,8 +20,9 @@ from .models.sync_type import SyncType, SyncTypeRecord, get_sync_type_id
 from .services.accounts_db import AccountsDB
 from .services.sync import run_sync
 from .tools import get_workflow
+from ._logging import configure_logging
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 POLL_INTERVAL = 3  # seconds
 SCHEDULE_CHECK_INTERVAL = 300  # seconds between scheduled-sync checks
@@ -124,117 +125,121 @@ def _queue_scheduled_syncs() -> int:
 
         if queued:
             session.commit()
-            logger.info("Scheduled %d full sync(s)", queued)
+            log.info("Scheduled %d full sync(s)", queued)
 
     return queued
 
 
 async def execute_run(run_id: int) -> None:
     """Transition a queued run to running, execute it, finalize."""
-    with SessionLocal() as session:
-        db_run = session.get(ScraperLoginSyncRun, run_id)
-        if not db_run or db_run.status != "queued":
-            return
-        login_id = db_run.scraper_login_id
-        account_filter = db_run.account_filter
-        db_run.status = "running"
-        db_run.started_at = datetime.utcnow()
-
-        login = session.get(ScraperLogin, login_id)
-        if login:
-            login.last_sync_status = "running"
-            login.last_sync_started_at = db_run.started_at
-            provider_key_for_session = login.provider_key
-        else:
-            provider_key_for_session = db_run.provider_key
-        session.commit()
-
-    # Create agent session for human-in-the-loop via dashboard API
-    human_input_handler = None
-    complete_session = None
+    structlog.contextvars.bind_contextvars(run_id=run_id)
     try:
-        from .agent_sessions import register_session, build_http_human_input_handler, complete_session_http, wait_for_api
-
-        if wait_for_api(timeout=15):
-            register_session(run_id, login_id, provider_key_for_session)
-            human_input_handler = build_http_human_input_handler(run_id)
-            complete_session = lambda status, message: complete_session_http(run_id, status=status, message=message)
-            logger.info("Dashboard API connected for run %d", run_id)
-        else:
-            logger.warning("Dashboard API not available, running without human-in-the-loop")
-    except Exception:
-        logger.debug("Agent sessions not available, running without human-in-the-loop", exc_info=True)
-
-    # Resolve sync type from the queued run (dashboard may have set it)
-    queued_sync_type = SyncType.auto
-    with SessionLocal() as session:
-        db_run_check = session.get(ScraperLoginSyncRun, run_id)
-        if db_run_check and db_run_check.sync_type_id:
-            st_record = session.get(SyncTypeRecord, db_run_check.sync_type_id)
-            if st_record and st_record.key in SyncType.__members__:
-                queued_sync_type = SyncType(st_record.key)
-
-    # Resolve workflow from login's tool_key
-    with SessionLocal() as session:
-        login_obj = session.get(ScraperLogin, login_id)
-        tool_key = login_obj.tool_key if login_obj else "financial_scraper"
-
-    workflow = None
-    download_statements = True
-    if tool_key and tool_key != "financial_scraper":
-        workflow = get_workflow(tool_key)
-        if not workflow:
-            logger.warning("Unknown tool_key '%s' for login %d, falling back to default", tool_key, login_id)
-        else:
-            download_statements = False
-
-    accounts = load_accounts(login_ids=[login_id])
-    if not accounts:
         with SessionLocal() as session:
             db_run = session.get(ScraperLoginSyncRun, run_id)
-            db_run.status = "failed"
-            db_run.error = "No account data found for login"
-            db_run.finished_at = datetime.utcnow()
+            if not db_run or db_run.status != "queued":
+                return
+            login_id = db_run.scraper_login_id
+            account_filter = db_run.account_filter
+            db_run.status = "running"
+            db_run.started_at = datetime.utcnow()
+
             login = session.get(ScraperLogin, login_id)
             if login:
-                login.last_sync_status = "failed"
-                login.last_sync_error = db_run.error
-                login.last_sync_finished_at = db_run.finished_at
+                login.last_sync_status = "running"
+                login.last_sync_started_at = db_run.started_at
+                provider_key_for_session = login.provider_key
+            else:
+                provider_key_for_session = db_run.provider_key
             session.commit()
-        if complete_session:
-            try:
-                complete_session("failed", "No account data found")
-            except Exception:
-                pass
-        return
 
-    provider_key = next(iter(accounts))
-    logins = accounts[provider_key]
+        # Create agent session for human-in-the-loop via dashboard API
+        human_input_handler = None
+        complete_session = None
+        try:
+            from .agent_sessions import register_session, build_http_human_input_handler, complete_session_http, wait_for_api
 
-    try:
-        await run_sync(
-            provider_key,
-            logins,
-            accounts_db=AccountsDB(),
-            download_statements=download_statements,
-            run_id=run_id,
-            account_filter=account_filter,
-            workflow=workflow,
-            human_input_handler=human_input_handler,
-            sync_type=queued_sync_type,
-        )
-        if complete_session:
-            try:
-                complete_session("completed", f"Sync completed for {provider_key}.")
-            except Exception:
-                pass
-    except Exception:
-        logger.exception("Sync run %d failed", run_id)
-        if complete_session:
-            try:
-                complete_session("failed", f"Sync run {run_id} failed.")
-            except Exception:
-                pass
+            if wait_for_api(timeout=15):
+                register_session(run_id, login_id, provider_key_for_session)
+                human_input_handler = build_http_human_input_handler(run_id)
+                complete_session = lambda status, message: complete_session_http(run_id, status=status, message=message)
+                log.info("Dashboard API connected for run %d", run_id)
+            else:
+                log.warning("Dashboard API not available, running without human-in-the-loop")
+        except Exception:
+            log.debug("Agent sessions not available, running without human-in-the-loop", exc_info=True)
+
+        # Resolve sync type from the queued run (dashboard may have set it)
+        queued_sync_type = SyncType.auto
+        with SessionLocal() as session:
+            db_run_check = session.get(ScraperLoginSyncRun, run_id)
+            if db_run_check and db_run_check.sync_type_id:
+                st_record = session.get(SyncTypeRecord, db_run_check.sync_type_id)
+                if st_record and st_record.key in SyncType.__members__:
+                    queued_sync_type = SyncType(st_record.key)
+
+        # Resolve workflow from login's tool_key
+        with SessionLocal() as session:
+            login_obj = session.get(ScraperLogin, login_id)
+            tool_key = login_obj.tool_key if login_obj else "financial_scraper"
+
+        workflow = None
+        download_statements = True
+        if tool_key and tool_key != "financial_scraper":
+            workflow = get_workflow(tool_key)
+            if not workflow:
+                log.warning("Unknown tool_key '%s' for login %d, falling back to default", tool_key, login_id)
+            else:
+                download_statements = False
+
+        accounts = load_accounts(login_ids=[login_id])
+        if not accounts:
+            with SessionLocal() as session:
+                db_run = session.get(ScraperLoginSyncRun, run_id)
+                db_run.status = "failed"
+                db_run.error = "No account data found for login"
+                db_run.finished_at = datetime.utcnow()
+                login = session.get(ScraperLogin, login_id)
+                if login:
+                    login.last_sync_status = "failed"
+                    login.last_sync_error = db_run.error
+                    login.last_sync_finished_at = db_run.finished_at
+                session.commit()
+            if complete_session:
+                try:
+                    complete_session("failed", "No account data found")
+                except Exception:
+                    pass
+            return
+
+        provider_key = next(iter(accounts))
+        logins = accounts[provider_key]
+
+        try:
+            await run_sync(
+                provider_key,
+                logins,
+                accounts_db=AccountsDB(),
+                download_statements=download_statements,
+                run_id=run_id,
+                account_filter=account_filter,
+                workflow=workflow,
+                human_input_handler=human_input_handler,
+                sync_type=queued_sync_type,
+            )
+            if complete_session:
+                try:
+                    complete_session("completed", f"Sync completed for {provider_key}.")
+                except Exception:
+                    pass
+        except Exception:
+            log.exception("Sync run %d failed", run_id)
+            if complete_session:
+                try:
+                    complete_session("failed", f"Sync run {run_id} failed.")
+                except Exception:
+                    pass
+    finally:
+        structlog.contextvars.clear_contextvars()
 
 
 async def run_worker() -> None:
@@ -242,14 +247,14 @@ async def run_worker() -> None:
     init_db()
     stale = _cleanup_stale_runs()
     if stale:
-        logger.info("Cleaned up %d stale run(s)", stale)
+        log.info("Cleaned up %d stale run(s)", stale)
 
-    logger.info("Sync worker started — polling every %ds", POLL_INTERVAL)
+    log.info("Sync worker started — polling every %ds", POLL_INTERVAL)
     stop = asyncio.Event()
     last_schedule_check = 0.0
 
     def _signal_handler():
-        logger.info("Shutting down...")
+        log.info("Shutting down...")
         stop.set()
 
     loop = asyncio.get_event_loop()
@@ -264,7 +269,7 @@ async def run_worker() -> None:
             queued = _next_queued_run()
             if queued:
                 run_id, provider_key = queued
-                logger.info("Picking up run %d (%s)", run_id, provider_key)
+                log.info("Picking up run %d (%s)", run_id, provider_key)
                 await execute_run(run_id)
             else:
                 # Periodically check if any logins need a scheduled full sync
@@ -278,13 +283,13 @@ async def run_worker() -> None:
                 except asyncio.TimeoutError:
                     pass
         except Exception:
-            logger.exception("Worker error")
+            log.exception("Worker error")
             try:
                 await asyncio.wait_for(stop.wait(), timeout=5)
             except asyncio.TimeoutError:
                 pass
 
-    logger.info("Sync worker stopped")
+    log.info("Sync worker stopped")
 
 
 if __name__ == "__main__":
@@ -294,17 +299,13 @@ if __name__ == "__main__":
     parser.add_argument("--reload", action="store_true", help="Restart on code changes (dev mode)")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    configure_logging()
 
     if args.reload:
         try:
             from watchfiles import watch
         except ImportError:
-            logger.error("--reload requires watchfiles: pip install watchfiles")
+            log.error("--reload requires watchfiles: pip install watchfiles")
             raise SystemExit(1)
 
         import os
@@ -321,8 +322,8 @@ if __name__ == "__main__":
             os.path.join(project_root, "shiso", "dashboard", "frontend", "node_modules"),
             os.path.join(project_root, "shiso", "dashboard", "frontend", "dist"),
         }
-        logger.info("Watching %s for changes...", watch_dir)
-        logger.info("Worker running in reload mode — will restart on file changes")
+        log.info("Watching %s for changes...", watch_dir)
+        log.info("Worker running in reload mode — will restart on file changes")
         worker_proc = subprocess.Popen(_worker_process_command())
         try:
             for changes in watch(watch_dir):
@@ -331,14 +332,14 @@ if __name__ == "__main__":
                     any(path.startswith(ignore_dir) for ignore_dir in ignore_dirs)
                     for path in changed_paths
                 ):
-                    logger.info("Ignoring reload for non-worker changes")
+                    log.info("Ignoring reload for non-worker changes")
                     continue
-                logger.info("Code changed, restarting worker...")
+                log.info("Code changed, restarting worker...")
                 worker_proc.terminate()
                 worker_proc.wait(timeout=10)
                 worker_proc = subprocess.Popen(_worker_process_command())
         except KeyboardInterrupt:
-            logger.info("Stopping reload worker...")
+            log.info("Stopping reload worker...")
         finally:
             if worker_proc.poll() is None:
                 worker_proc.terminate()

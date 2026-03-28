@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
+import structlog
 import os
 import re
 import subprocess
@@ -35,7 +35,7 @@ from browser_use.llm.browser_use.chat import ChatBrowserUse
 from .playbooks import load_provider_playbook
 from .prompts import render as render_prompt
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "scraper.toml"
 
@@ -83,11 +83,11 @@ async def _kill_stale_chrome(user_data_dir: Path, *, on_log: Callable | None = N
                 for pid in pids_to_kill:
                     try:
                         await asyncio.to_thread(subprocess.run, ["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=5)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        log.debug("taskkill_failed", pid=pid, exc=str(exc))
                 await asyncio.sleep(1)
         except Exception as exc:
-            logger.debug("Chrome cleanup failed (non-fatal): %s", exc)
+            log.debug("chrome_cleanup_failed", exc=str(exc))
     else:
         # Unix: pkill by matching the user-data-dir argument
         try:
@@ -97,8 +97,8 @@ async def _kill_stale_chrome(user_data_dir: Path, *, on_log: Callable | None = N
                 capture_output=True, timeout=5,
             )
             await asyncio.sleep(1)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("pkill_failed", exc=str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +311,7 @@ Final result: {final_result[:500] if final_result else 'none'}
                 reason=parsed.get("reason", ""),
             )
     except Exception as exc:
-        logger.debug("Assessment failed: %s", exc)
+        log.debug("Assessment failed: %s", exc)
 
     # Fallback: use judge verdict if available
     if judge and judge.get("verdict") is False:
@@ -540,7 +540,7 @@ def _build_tools(
         prompt_text = str(prompt or "I need your help to continue.").strip()
 
         if human_input_handler is not None:
-            logger.info("Agent requesting human help via handler: %s", prompt_text)
+            log.info("Agent requesting human help via handler: %s", prompt_text)
             response = await human_input_handler(prompt_text)
             response = str(response or "").strip()
             if response.lower() in {"s", "skip"}:
@@ -548,10 +548,10 @@ def _build_tools(
             return ActionResult(extracted_content=f"Human response: {response}")
 
         if not interactive:
-            logger.warning("Agent requested human intervention in auto mode — skipping")
+            log.warning("Agent requested human intervention in auto mode — skipping")
             raise _HumanPauseSkipped("2FA/verification required")
 
-        logger.warning("Agent requested human intervention — pausing")
+        log.warning("Agent requested human intervention — pausing")
         print(f"\n{'='*60}")
         print(f"  HUMAN INPUT NEEDED")
         print(f"  {prompt_text}")
@@ -561,7 +561,7 @@ def _build_tools(
         )
         if result.strip().lower() == "s":
             raise _HumanPauseSkipped("Skipped by user")
-        logger.info("Human responded — resuming agent")
+        log.info("Human responded — resuming agent")
         return ActionResult(extracted_content=f"Human response: {result.strip()}" if result.strip() else "Human completed the action. Continue with the task.")
 
     return tools
@@ -720,7 +720,7 @@ async def _enrich_account_details(
                 except (json.JSONDecodeError, TypeError):
                     pass  # Keep existing values if parse fails
         except Exception as exc:
-            logger.warning("[%s] Detail enrichment failed for %s: %s", provider_key, account_name, exc)
+            log.warning("[%s] Detail enrichment failed for %s: %s", provider_key, account_name, exc)
             if on_log:
                 on_log(f"[{provider_key}] Detail enrichment skipped for {account_name}: {exc}")
 
@@ -817,7 +817,7 @@ async def _download_statements(
                 except json.JSONDecodeError:
                     pass
         except Exception as exc:
-            logger.warning("[%s] Statement extraction failed for %s: %s", provider_key, account_name, exc)
+            log.warning("[%s] Statement extraction failed for %s: %s", provider_key, account_name, exc)
             if on_log:
                 on_log(f"[{provider_key}] Failed to extract from statement for {account_name}: {exc}")
             continue
@@ -843,8 +843,8 @@ async def _download_statements(
                 try:
                     pdf_path.rename(new_path)
                     pdf_path = new_path
-                except Exception:
-                    pass  # Keep original name if rename fails
+                except Exception as exc:
+                    log.debug("PDF rename failed (keeping original): %s", exc)
 
             file_path = str(pdf_path)
             if on_log:
@@ -878,7 +878,7 @@ def _update_auth_status(login_id: int | None, status: str) -> None:
                 login.last_auth_at = datetime.utcnow()
                 session.commit()
     except Exception:
-        logger.debug("Could not update auth status for login %s", login_id, exc_info=True)
+        log.debug("Could not update auth status for login %s", login_id, exc_info=True)
 
 
 def _learn_dashboard_url(
@@ -1078,8 +1078,8 @@ def _set_needs_full_sync(login_id: int, value: bool = True) -> None:
             if login:
                 login.needs_full_sync = value
                 session.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("Failed to set needs_full_sync for login %s: %s", login_id, exc)
 
 
 def _load_known_accounts_text(provider_key: str) -> str:
@@ -1397,7 +1397,7 @@ async def scrape_provider(
                     on_log(f"[{provider_key}] {label}: 2FA required — skipping (auto mode)")
 
             except Exception as exc:
-                logger.exception("Agent failed for %s/%s", provider_key, label)
+                log.exception("Agent failed for %s/%s", provider_key, label)
                 _update_auth_status(login_id, "login_failed")
                 metrics.errors.append(f"{label}: {exc}")
                 if on_log:
@@ -1563,7 +1563,7 @@ async def scrape_provider(
         metrics.errors.append(f"Provider timeout after {elapsed:.1f}s (limit: {provider_timeout}s)")
         if on_log:
             on_log(f"[{provider_key}] TIMEOUT: exceeded {provider_timeout}s limit after {elapsed:.1f}s")
-        logger.warning("%s timed out after %.1fs (limit: %ds)", provider_key, elapsed, provider_timeout)
+        log.warning("%s timed out after %.1fs (limit: %ds)", provider_key, elapsed, provider_timeout)
     finally:
         # Always kill the browser session
         await browser_session.kill()

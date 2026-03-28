@@ -7,7 +7,7 @@ scraper.toml — used by modules that need raw LLM calls without browser-use.
 from __future__ import annotations
 
 import json
-import logging
+import structlog
 import os
 import re
 from pathlib import Path
@@ -20,7 +20,7 @@ try:
 except ImportError:
     import tomli as tomllib
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "scraper.toml"
 
@@ -67,35 +67,35 @@ async def llm_chat(messages: list[dict[str, Any]], config: dict | None = None) -
         "max_tokens": 500,
     }
 
-    logger.info("LLM request: url=%s model=%s timeout=%s", url, model, timeout)
-    logger.debug("LLM payload messages count: %d", len(messages))
+    log.info("LLM request: url=%s model=%s timeout=%s", url, model, timeout)
+    log.debug("LLM payload messages count: %d", len(messages))
     if messages:
-        logger.debug("LLM system prompt (first 500 chars): %s", messages[0]["content"][:500])
-        logger.debug("LLM user prompt: %s", messages[-1]["content"][:200])
+        log.debug("LLM system prompt (first 500 chars): %s", messages[0]["content"][:500])
+        log.debug("LLM user prompt: %s", messages[-1]["content"][:200])
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
-            logger.info("LLM sending request...")
+            log.info("LLM sending request...")
             response = await client.post(url, json=payload, headers=headers)
-            logger.info("LLM response status: %s", response.status_code)
+            log.info("LLM response status: %s", response.status_code)
             if response.status_code != 200:
-                logger.error("LLM error response: %s", response.text[:500])
+                log.error("LLM error response: %s", response.text[:500])
             else:
-                logger.debug("LLM response body (first 500 chars): %s", response.text[:500])
+                log.debug("LLM response body (first 500 chars): %s", response.text[:500])
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as e:
-            logger.error("LLM HTTP error: %s %s", e.response.status_code, e.response.text[:500])
+            log.error("LLM HTTP error: %s %s", e.response.status_code, e.response.text[:500])
             return None
         except httpx.TimeoutException as e:
-            logger.error("LLM timeout after %ss: %s", timeout, e)
+            log.error("LLM timeout after %ss: %s", timeout, e)
             return None
         except (httpx.ConnectError, ConnectionError) as e:
-            logger.error("LLM connection error: %s", e)
+            log.error("LLM connection error: %s", e)
             return None
 
     if "choices" not in data or not data["choices"]:
-        logger.error("LLM response missing 'choices': %s", json.dumps(data)[:500])
+        log.error("LLM response missing 'choices': %s", json.dumps(data)[:500])
         return None
 
     content = data["choices"][0]["message"]["content"]
@@ -113,5 +113,5 @@ async def llm_chat(messages: list[dict[str, Any]], config: dict | None = None) -
     try:
         return json.loads(content)
     except json.JSONDecodeError:
-        logger.warning("LLM response not valid JSON: %s", content[:300])
+        log.warning("LLM response not valid JSON: %s", content[:300])
         return None

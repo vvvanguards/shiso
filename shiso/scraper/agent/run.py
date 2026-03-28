@@ -13,7 +13,7 @@ Notes:
 
 import asyncio
 import json
-import logging
+import structlog
 import os
 from collections import defaultdict
 from pathlib import Path
@@ -26,7 +26,7 @@ from ..services.accounts_db import AccountsDB
 from ..services.crypto import decrypt
 from ..services.sync import run_sync
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "accounts.json"
 

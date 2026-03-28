@@ -5,14 +5,14 @@ run's logs and decide if more iterations would help.
 """
 
 import asyncio
-import logging
+import structlog
 from pathlib import Path
 
 from .analyst import analyze_run, load_provider_hints
 from .llm import llm_chat
 from .run import run_scrapers
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 DECISION_PROMPT = """You are helping decide if we should continue tuning a web scraper.
 

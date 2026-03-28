@@ -4,6 +4,7 @@ Shared database configuration for Shiso.
 
 from functools import lru_cache
 from pathlib import Path
+import structlog
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -11,6 +12,8 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATABASE_PATH = PROJECT_ROOT / "data" / "shiso.db"
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+
+log = structlog.get_logger()
 
 
 class Base(DeclarativeBase):
@@ -238,9 +241,10 @@ def _add_missing_columns_to_existing_schema() -> None:
                         text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
                     )
                     session.commit()
+                    log.debug("added_column", column=column, table=table)
             except Exception:
                 # Table doesn't exist at all — skip
-                pass
+                log.debug("table_not_found_skipping", table=table)
 
 
 def run_alembic_migrations() -> None:

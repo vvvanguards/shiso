@@ -10,7 +10,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import logging
+import structlog
 import os
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +19,7 @@ from typing import Any, Awaitable, Callable
 from ..database import SessionLocal, init_db
 from ..models.accounts import ScraperLogin
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 # Status after Agent login attempt
 _STATUS_AUTHENTICATED = "authenticated"
@@ -245,7 +245,7 @@ async def interactive_auth_login(
         _notify("completed", message)
         return {"status": "completed", "message": message, "provider_key": provider}
     except Exception as exc:
-        logger.exception("Interactive auth failed for %s", provider)
+        log.exception("Interactive auth failed for %s", provider)
         _update_provider_auth(provider, "login_failed")
         message = str(exc)
         _notify("failed", message)
@@ -406,7 +406,7 @@ async def auth_login(targets: list[str] | None = None) -> None:
                 print(f"  [{provider}] Marked {count} login(s) as authenticated")
 
         except Exception as exc:
-            logger.exception("Auth agent failed for %s", provider)
+            log.exception("Auth agent failed for %s", provider)
             print(f"  [{provider}] Agent error: {exc}")
             # Ask user what to do
             result = await asyncio.get_event_loop().run_in_executor(
