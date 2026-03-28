@@ -425,3 +425,97 @@ def match_providers_sync(rows: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "aggregated_count": len(aggregated),
     }
+
+
+async def enrich_domain_metadata(domain: str) -> dict[str, Any] | None:
+    """Fetch a domain's login page and extract Open Graph metadata.
+
+    Returns dict with keys: domain, login_url, favicon_url, is_financial, label, category.
+    Returns None on failure (non-critical — log and continue).
+    """
+    import asyncio
+    import re
+    from urllib.parse import urlparse
+
+    # Try to find a login URL for the domain
+    login_url = f"https://{domain}"
+    favicon_url = f"https://{domain}/favicon.ico"
+    is_financial = None
+    label = domain.split('.')[0].capitalize()
+    category = "Other"
+
+    try:
+        import httpx
+        async with asyncio.timeout(8):
+            try:
+                resp = await httpx.AsyncClient(follow_redirects=True).get(login_url, timeout=8.0)
+                html = resp.text
+
+                # Extract og:title for label
+                og_title_match = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html, re.I)
+                if not og_title_match:
+                    og_title_match = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:title["\']', html, re.I)
+                if og_title_match:
+                    label = og_title_match.group(1).split('|')[0].split('-')[0].strip()
+
+                # Extract og:description for category hints
+                og_desc = ""
+                desc_match = re.search(r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']', html, re.I)
+                if desc_match:
+                    og_desc = desc_match.group(1).lower()
+
+                # Try to find a login URL from common patterns
+                login_patterns = [
+                    r'href=["\']([^"\']*login[^"\']*)["\']',
+                    r'href=["\']([^"\']*signin[^"\']*)["\']',
+                    r'action=["\']([^"\']*login[^"\']*)["\']',
+                ]
+                for pattern in login_patterns:
+                    m = re.search(pattern, html, re.I)
+                    if m:
+                        href = m.group(1)
+                        if href.startswith('/'):
+                            parsed = urlparse(login_url)
+                            login_url = f"{parsed.scheme}://{parsed.netloc}{href}"
+                        elif href.startswith('http'):
+                            login_url = href
+                        break
+
+                # Heuristic: detect financial institution
+                financial_keywords = ['bank', 'credit', 'loan', 'investment', 'insurance', 'mortgage', 'wealth', 'capital', 'fidelity', 'vanguard', 'schwab', 'chase', 'citi', 'amex', 'discover', 'wells fargo', 'bank of america']
+                is_financial = any(kw in og_desc or kw in label.lower() for kw in financial_keywords)
+
+                # Try to infer category from page content
+                if any(k in og_desc for k in ['bank', 'credit union', 'lending']):
+                    category = "Bank"
+                elif any(k in og_desc for k in ['credit card', 'rewards', 'miles']):
+                    category = "Credit Card"
+                elif any(k in og_desc for k in ['insurance', 'coverage', 'quote']):
+                    category = "Insurance"
+                elif any(k in og_desc for k in ['electric', 'gas', 'water', 'utility', 'energy']):
+                    category = "Utility"
+
+                return {
+                    "domain": domain,
+                    "login_url": login_url,
+                    "favicon_url": favicon_url,
+                    "is_financial": is_financial,
+                    "label": label,
+                    "category": category,
+                }
+            except Exception:
+                # Fallback: preserve login_url/favicon_url, use domain as label
+                return {
+                    "domain": domain,
+                    "login_url": login_url,
+                    "favicon_url": favicon_url,
+                    "is_financial": None,
+                    "label": domain.split('.')[0].capitalize(),
+                    "category": "Other",
+                }
+    except asyncio.TimeoutError:
+        logger.warning("Enrichment timeout for domain: %s", domain)
+        return None
+    except Exception as exc:
+        logger.warning("Enrichment failed for domain %s: %s", domain, exc)
+        return None

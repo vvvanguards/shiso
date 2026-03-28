@@ -34,6 +34,8 @@ dependencies = [
     "srclight @ git+https://github.com/vvvanguards/srclight.git@develop",
     "pydantic-ai>=1.55.0",
     "anthropic>=0.76.0",
+    # HTTP client
+    "httpx>=0.27.0",
 ]
 
 [project.scripts]
