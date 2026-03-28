@@ -115,7 +115,6 @@
         <DataTable
           v-if="expandedGroups.includes(group.domain)"
           :value="group.rows"
-          v-model:selection="selectedModelForGroup(group.rows)"
           dataKey="id"
           size="small"
           :rowClass="(data) => data.is_duplicate && data.existing_login_is_deleted ? 'bg-red-900/20 opacity-50' : data.is_duplicate ? 'opacity-50' : ''"
@@ -295,16 +294,6 @@ function toggleGroupSelection(group, selectAll) {
   } else {
     selectedRows.value = selectedRows.value.filter(r => !group.rows.find(gr => gr.id === r.id))
   }
-}
-
-function selectedModelForGroup(groupRows) {
-  return computed({
-    get: () => selectedRows.value.filter(r => groupRows.find(gr => gr.id === r.id)),
-    set: (val) => {
-      const other = selectedRows.value.filter(r => !groupRows.find(gr => gr.id === r.id))
-      selectedRows.value = [...other, ...val]
-    }
-  })
 }
 
 function selectAll() {
