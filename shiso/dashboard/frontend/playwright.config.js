@@ -18,8 +18,9 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
+  globalSetup: './tests/e2e/global-setup.js',
   webServer: {
-    command: 'npm run dev',
+    command: 'SHISO_DATABASE_PATH=data/shiso_test.db npm run dev',
     url: 'http://localhost:5175',
     reuseExistingServer: true,
     timeout: 30_000,

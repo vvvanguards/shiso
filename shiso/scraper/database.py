@@ -3,6 +3,7 @@ Shared database configuration for Shiso.
 """
 
 from functools import lru_cache
+import os
 from pathlib import Path
 import structlog
 
@@ -10,7 +11,9 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-DATABASE_PATH = PROJECT_ROOT / "data" / "shiso.db"
+# Allow override via env var for E2E test isolation (e.g. SHISO_DATABASE_PATH=data/shiso_test.db)
+_database_path = os.environ.get("SHISO_DATABASE_PATH", "data/shiso.db")
+DATABASE_PATH = PROJECT_ROOT / _database_path
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 log = structlog.get_logger()
